@@ -123,6 +123,48 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('活动类型 ID 2', result.text)
         self.assertEqual(details[0].facts[0].group, '指定角色')
 
+    def test_activity_shorthand_can_mix_known_aliases_colors_and_typed_values(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        details = project_details({'effects': [{
+            'targets': {'band': {'name': ['Ave Mujica']}, 'character': {'name': ['高松灯']}},
+            'cardType': 1,
+        }]})
+        repo = Repository(catalog(activities=(
+            activity(2, '夹具活动', end=NOW, details=details, event_type_id=2),
+            activity(3, '红色', end=NOW),
+        )))
+        for query in ('历史 Ave Mujica tmr 红 类型2', '历史 角色 tmr 红色 乐队 Ave Mujica 类型 2',
+                      '历史 tmr 乐队=Ave Mujica 红色 类型ID=2', '列表 Ave Mujica 红'):
+            with self.subTest(query=query):
+                result = execute_activity(query, repo, now=NOW)
+                self.assertEqual([row.command for row in result.views[0].rows], ['/查活动 2'])
+        self.assertIn('活动 ID 3', execute_activity('红色', repo, now=NOW).text)
+        self.assertEqual(execute_activity('历史 红 未知词', repo, now=NOW).status, 'invalid_arguments')
+        self.assertEqual(execute_activity('历史 红 蓝', repo, now=NOW).status, 'invalid_arguments')
+
+    def test_activity_filter_counts_only_plausible_matches_with_missing_data(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        records = (
+            activity(1, '已匹配', end=NOW, event_type_id=2,
+                     details=project_details({'effects': [{'targets': {'character': {'name': '高松灯'}}}]})),
+            activity(2, '未知目标', end=NOW, event_type_id=2,
+                     details=project_details({'effects': [{'raw': {'_characterId': 7}}]})),
+            activity(3, '缺少效果', end=NOW, event_type_id=2, details=project_details({})),
+            activity(4, '无加成', end=NOW, details=project_details({'effects': []})),
+            activity(5, '类型不符', end=NOW, event_type_id=3),
+            activity(6, '未来活动', event_type_id=2),
+        )
+        repo = Repository(catalog(activities=records))
+        result = execute_activity('历史 tmr 类型2', repo, now=NOW)
+        self.assertIn('匹配 1 期', result.text)
+        self.assertIn('另有 2 期资料不足', result.text)
+        self.assertIn('另有 2 期资料不足', result.views[0].subtitle)
+        for record, expected in ((records[1], '没有确认匹配的活动'), (records[3], '没有找到符合条件的活动')):
+            repo.snapshot = catalog(activities=(record,))
+            self.assertIn(expected, execute_activity('历史 角色=高松灯', repo, now=NOW).text)
+
     def test_calendar_limits_time_conflicts_to_the_requested_slot(self):
         current = activity(1, '当前唯一')
         next_a = activity(2, '未来甲', NOW + 200, NOW + 300)
@@ -181,10 +223,10 @@ class InformationQueryTests(unittest.TestCase):
         with patch('ournotes_bot.application.replies.visual_asset', return_value=None):
             prepared = render_prepared_inner(result.activity.text, result, repo, 'zh')
         self.assertTrue(prepared.image)
-        self.assertEqual(prepared.image_caption, '/查榜线 jp 歌曲ID=101')
+        self.assertEqual(prepared.image_caption, '/查榜线 jp 锁定活动1 歌曲ID=101')
         batch = expand_replies([replace(prepared, image=None, pages=(prepared,) * 7)])
         self.assertEqual(len(batch), 5)
-        self.assertIn('/查榜线 jp 歌曲ID=101', batch[-1].image_caption)
+        self.assertIn('/查榜线 jp 锁定活动1 歌曲ID=101', batch[-1].image_caption)
         self.assertIn('图片 5/7；/继续', batch[-1].image_caption)
         self.assertEqual(len(batch[-1].context.remaining), 2)
 
@@ -504,7 +546,7 @@ class InformationQueryTests(unittest.TestCase):
         repo, source = self._current_repository(record)
         result = execute_activity('', repo)
         self.assertEqual(source.calls, ['jp'])
-        self.assertIn('/查榜线 jp 歌曲ID=101', result.text)
+        self.assertIn('/查榜线 jp 锁定活动1 歌曲ID=101', result.text)
         self.assertIn('/查卡 7', result.text)
         self.assert_same_text(result)
 
@@ -513,7 +555,7 @@ class InformationQueryTests(unittest.TestCase):
         repo, _ = self._current_repository(record)
         result = execute_activity('', repo)
         self.assertEqual(result.text.count('歌曲 ID 101'), 1)
-        self.assertIn('/查榜线 jp 歌曲ID=101', result.text)
+        self.assertIn('/查榜线 jp 锁定活动1 歌曲ID=101', result.text)
         self.assertNotIn('/查曲 101', result.text)
         self.assertIn('/查曲 102', result.text)
         self.assert_same_text(result)

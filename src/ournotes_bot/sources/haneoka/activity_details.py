@@ -50,6 +50,7 @@ def target_names(target):
 def project_details(event, artwork=lambda path: '', attribute_artwork=lambda value: ''):
     result = []
     groups = {}
+    unresolved_filters = set()
     for effect in rows(event.get('effects')):
         targets = effect.get('targets', {})
         if not isinstance(targets, dict):
@@ -63,6 +64,14 @@ def project_details(event, artwork=lambda path: '', attribute_artwork=lambda val
         color = color if type(color) is int and color in ACTIVITY_ATTRIBUTES else None
         band_names = target_names(targets.get('band'))
         character_names = target_names(targets.get('character'))
+        raw = effect.get('raw')
+        raw = raw if isinstance(raw, dict) else {}
+        for field, source_key, resolved in (('乐队', '_bandId', band_names),
+                                            ('角色', '_characterId', character_names),
+                                            ('属性', '_cardType', color)):
+            ident = str(raw.get(source_key, ''))
+            if not resolved and ident.isdecimal() and ident.lstrip('0'):
+                unresolved_filters.add(field)
         color_name = ACTIVITY_ATTRIBUTES.get(color) if not target_names(targets.get('attribute')) else None
         title = '／'.join(filter(None, (constraint, *names, color_name))) or '加成对象未确认'
         key = (effect.get('resourceTypeConstraint'), color, json.dumps(targets, sort_keys=True, ensure_ascii=False))
@@ -82,7 +91,8 @@ def project_details(event, artwork=lambda path: '', attribute_artwork=lambda val
                             bonus_ranges=tuple(bounds),group=role,bonus_band_names=band_names,
                             bonus_character_names=character_names,bonus_attribute=color)
                for title, lines, table, image, kind, ref, bounds, role, band_names, character_names, color in groups.values()]
-    result.append(ActivitySection('加成', tuple(effects), isinstance(event.get('effects'), list)))
+    result.append(ActivitySection('加成', tuple(effects), isinstance(event.get('effects'), list),
+                                  frozenset(unresolved_filters)))
     rewards = []
     complete = isinstance(event.get('rewards'), list)
     for row in rows(event.get('rewards')):

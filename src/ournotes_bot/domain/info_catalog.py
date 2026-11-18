@@ -79,6 +79,7 @@ class ActivitySection:
     name: str
     facts: tuple[ActivityFact, ...] = ()
     complete: bool = False
+    unresolved_filters: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

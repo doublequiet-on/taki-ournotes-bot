@@ -12,7 +12,7 @@ from dataclasses import replace
 
 from ..data import normalize
 from ..domain.info_catalog import ACTIVITY_ATTRIBUTES
-from .entity_lexicon import band_name_variants, character_name_variants, information_alias_targets
+from .entity_lexicon import band_name_variants, character_name_variants, information_alias_entries, information_alias_targets
 from .contracts.info import CalendarTime, InfoAnswer, InfoRow, InfoSchedule, InfoView
 from .event_cutoff_query import SERVER_ALIASES
 from .info_query import (answer, available, card_rows, footer, named_matches,
@@ -22,13 +22,14 @@ from ..sources.moenotes_events import SERVERS, SourceError, display_time, zone_l
 HELP = (
     '/查活动 [jp/hk/kr/en] [当前/最近] [加成/奖励/任务/卡池]\n'
     '/查活动 [jp] ID或名称 [加成/奖励/任务/卡池]\n'
-    '/查活动 [jp] 列表/历史 [乐队=MyGO] [角色=高松灯] [属性=红色] [类型ID=1]\n'
+    '/查活动 [jp] 列表/历史 [MyGO] [高松灯] [红色] [类型2]\n'
     '/查活动 [jp/intl] 日程/日程开始/下期'
 )
 SECTIONS = {'加成', '奖励', '任务', '卡池'}
-FILTER_FIELDS = {'乐队', '角色', '属性', '颜色', '类型id'}
+FILTER_MARKER = re.compile(
+    r'(?<!\S)(乐队|角色|属性|颜色|类型(?:\s*id)?)(?:\s*[=＝]\s*|\s+|(?=[\d+\-−])|$)'
+    r'|(?<!\S)([^\s=＝]+)\s*[=＝]\s*', re.I)
 DETAIL_HINT = '请先选定活动，再把一个明细子项放在末尾，例如 /查活动 2 奖励。'
-FILTER_KEY = re.compile(r'(?<!\S)([^\s=＝]+)[=＝]')
 NUMERIC_EXPRESSION = re.compile(r'[+\-−]?\s*\d+(?:\s*[-−–—~～至到]\s*[+\-−]?\d+|\.\d+)?')
 
 
@@ -163,6 +164,104 @@ def _matched_targets(facts, field, names, variants):
     return tuple(dict.fromkeys(matches))
 
 
+def _short_filter_names(catalog):
+    bands, characters = set(), set()
+    for person in getattr(catalog, 'characters', ()):
+        bands.update(name for name in (person.band, *person.band_names.values()) if name)
+        characters.update(name for name in (person.name, *person.names.values()) if name)
+    for record in catalog.activities:
+        for section in record.details:
+            if section.name == '加成':
+                for fact in section.facts:
+                    bands.update(fact.bonus_band_names)
+                    characters.update(fact.bonus_character_names)
+    variants = {'band': band_name_variants, 'character': character_name_variants}
+    known = {
+        'band': {variant for name in bands for variant in band_name_variants(name)},
+        'character': {variant for name in characters for variant in character_name_variants(name)},
+    }
+    # An alias is usable only if its target exists in this captured catalog.
+    aliases = {'band': set(), 'character': set()}
+    for kind, alias, target in information_alias_entries():
+        if variants[kind](target) & known[kind]:
+            aliases[kind].add(normalize(alias))
+    names = {}
+    for kind, field in (('band', '乐队'), ('character', '角色')):
+        for name in known[kind] | aliases[kind]:
+            if name:
+                names.setdefault(name, set()).add(field)
+    for name in ACTIVITY_ATTRIBUTES.values():
+        for spelling in (name, name[0], name.translate(str.maketrans('红蓝绿黄', '紅藍綠黃')),
+                         name[0].translate(str.maketrans('红蓝绿黄', '紅藍綠黃'))):
+            names.setdefault(spelling, set()).add('属性')
+    return names
+
+
+def _filter_prefix(words, names, longest, field=None):
+    match = None
+    for stop in range(1, len(words) + 1):
+        value = normalize(' '.join(words[:stop]))
+        if len(value) > longest:
+            break
+        fields = names.get(value, ())
+        if fields and (field is None or field in fields):
+            match = (stop, fields)
+    return match
+
+
+def _read_activity_filters(term, catalog, mode):
+    if not term or unicodedata.normalize('NFKC', term).isdecimal():
+        return term, {}
+    needle = normalize(term)
+    if mode != 'list' and any(needle == normalize(name) for record in catalog.activities
+                             for name in (record.title, *record.names.values()) if name):
+        return term, {}
+    markers = tuple(FILTER_MARKER.finditer(term))
+    if not markers and mode != 'list' and named_matches(catalog.activities, term):
+        return term, {}
+    if markers and all(marker[1] is None for marker in markers) and mode == 'search':
+        return term, {}
+    names = _short_filter_names(catalog)
+    longest = max(map(len, names), default=0)
+    filters = {}
+    title = []
+
+    def add(field, value):
+        if field in filters or not normalize(value):
+            raise ValueError('每类条件请填写一个值。')
+        filters[field] = value
+
+    def read_bare(words, *, allow_title=False):
+        while words:
+            match = _filter_prefix(words, names, longest)
+            if not match:
+                if allow_title and not filters:
+                    title.append(words[0])
+                    words = words[1:]
+                    continue
+                raise ValueError(f'无法识别筛选条件「{words[0]}」。')
+            stop, fields = match
+            if len(fields) != 1:
+                raise ValueError(f'「{" ".join(words[:stop])}」可指多个条件，请在前面写明乐队、角色或属性。')
+            add(next(iter(fields)), ' '.join(words[:stop]))
+            words = words[stop:]
+
+    read_bare(term[:markers[0].start()].split() if markers else term.split(), allow_title=True)
+    for marker, next_marker in zip(markers, (*markers[1:], None)):
+        if marker[1] is None:
+            raise ValueError(f'未知筛选条件「{marker[2]}」。')
+        field = ''.join(marker[1].casefold().split()).replace('颜色', '属性').replace('类型id', '类型')
+        words = term[marker.end():next_marker.start() if next_marker else len(term)].split()
+        if field == '类型':
+            stop = 1
+        else:
+            match = _filter_prefix(words, names, longest, field)
+            stop = match[0] if match else len(words)
+        add(field, ' '.join(words[:stop]))
+        read_bare(words[stop:])
+    return ' '.join(title), filters
+
+
 def _static(query, repository, now, section=''):
     mode, term = 'search', query
     head, *tail = query.split(None, 1)
@@ -172,19 +271,23 @@ def _static(query, repository, now, section=''):
         mode = 'history' if head == '历史' else 'list'
         term = tail[0] if tail else ''
 
-    filters = {}
-    keys = tuple(FILTER_KEY.finditer(term))
-    if keys and (mode != 'search' or keys[0].group(1).casefold() in FILTER_FIELDS):
-        mode = 'list' if mode == 'search' else mode
-        for key, next_key in zip(keys, (*keys[1:], None)):
-            field = key.group(1).casefold().replace('颜色', '属性')
-            value = term[key.end():next_key.start() if next_key else len(term)].strip()
-            if field not in FILTER_FIELDS or field in filters or not normalize(value):
-                return InfoAnswer('请各指定一次加成乐队、角色、属性或活动类型 ID。\n' + HELP, 'invalid_arguments')
-            filters[field] = value
-        term = term[:keys[0].start()].strip()
+    literal = unicodedata.normalize('NFKC', term)
+    normalized_term = normalize(term)
+    if not literal.isdecimal() and (normalized_term.isdecimal() or NUMERIC_EXPRESSION.fullmatch(literal)):
+        return InfoAnswer('活动 ID 请使用完整正整数，例如 /查活动 2。', 'invalid_arguments')
+    if term and not normalized_term:
+        return InfoAnswer(HELP, 'invalid_arguments')
+    catalog = repository.capture_catalog()
+    if not available(catalog, 'activities'):
+        return unavailable('活动')
+    try:
+        term, filters = _read_activity_filters(term, catalog, mode)
+    except ValueError as exc:
+        return InfoAnswer(str(exc) + '\n' + HELP, 'invalid_arguments')
+    if filters:
         if section:
             return InfoAnswer(DETAIL_HINT, 'invalid_arguments')
+        mode = 'list' if mode == 'search' else mode
     elif mode == 'list' and term:
         return InfoAnswer(HELP, 'invalid_arguments')
     if '属性' in filters:
@@ -196,38 +299,37 @@ def _static(query, repository, now, section=''):
     else:
         attribute = None
     type_id = None
-    if '类型id' in filters:
-        ident = unicodedata.normalize('NFKC', filters.pop('类型id'))
+    if '类型' in filters:
+        ident = unicodedata.normalize('NFKC', filters.pop('类型'))
         if re.fullmatch(r'[1-9][0-9]{0,15}', ident) is None:
             return InfoAnswer('类型 ID 请使用完整正整数。', 'invalid_arguments')
         type_id = int(ident)
         filters['类型ID'] = ident
     band_names = _target_filter(filters.get('乐队'), 'band', band_name_variants)
     character_names = _target_filter(filters.get('角色'), 'character', character_name_variants)
-    literal = unicodedata.normalize('NFKC', term)
-    normalized_term = normalize(term)
-    if not literal.isdecimal() and (normalized_term.isdecimal() or NUMERIC_EXPRESSION.fullmatch(literal)):
-        return InfoAnswer('活动 ID 请使用完整正整数，例如 /查活动 2。', 'invalid_arguments')
-    if term and not normalized_term:
-        return InfoAnswer(HELP, 'invalid_arguments')
-    catalog = repository.capture_catalog()
-    if not available(catalog, 'activities'):
-        return unavailable('活动')
     records = catalog.activities
     if mode == 'history':
         records = tuple(r for r in records if r.end_at is not None and r.end_at <= now)
     if term:
         records = named_matches(records, term)
     matches = {}
+    incomplete = 0
     if filters:
         for record in records:
-            if type_id is not None and record.event_type_id != type_id:
+            if type_id is not None and record.event_type_id not in (None, type_id):
                 continue
-            facts = tuple(fact for group in record.details if group.name == '加成' for fact in group.facts)
+            bonus = next((group for group in record.details if group.name == '加成'), None)
+            facts = bonus.facts if bonus else ()
             bands = _matched_targets(facts, 'bonus_band_names', band_names, band_name_variants)
             characters = _matched_targets(facts, 'bonus_character_names', character_names, character_name_variants)
-            if (band_names and not bands) or (character_names and not characters) or (
-                    attribute is not None and not any(f.bonus_attribute == attribute for f in facts)):
+            unmatched = {field for field, selected, found in (
+                ('乐队', band_names, bands), ('角色', character_names, characters),
+                ('属性', attribute, any(f.bonus_attribute == attribute for f in facts)),
+            ) if selected and not found}
+            if bonus and bonus.complete and unmatched - bonus.unresolved_filters:
+                continue
+            if unmatched or (type_id is not None and record.event_type_id is None):
+                incomplete += 1
                 continue
             matches[record.id] = tuple(filter(None, (
                 '加成乐队 · ' + '、'.join(bands) if bands else '',
@@ -237,13 +339,12 @@ def _static(query, repository, now, section=''):
         records = tuple(record for record in records if record.id in matches)
     records = tuple(sorted(records, key=lambda r: (r.start_at is not None, r.start_at or 0, r.id), reverse=True))
     notes = footer(catalog)
-    filter_text = ' · '.join(f'{key}={value}' for key, value in filters.items())
-    if filter_text:
-        notes = (*notes, '加成筛选仅匹配已确认的活动资料。')
+    filter_text = ' · '.join(f'{key} {value}' for key, value in filters.items())
+    coverage = f'另有 {incomplete} 期资料不足，无法判断是否匹配。' if incomplete else ''
     if not records:
         message = '没有找到符合条件的活动。'
         if filter_text:
-            message = filter_text + ' · ' + message
+            message = '\n'.join(filter(None, (filter_text, '没有确认匹配的活动。' if incomplete else message, coverage)))
         return answer((InfoView('日服 · 活动资料', message, footer=(*notes, HELP)),), 'no_results')
     if mode == 'search' and len(records) == 1:
         record = records[0]
@@ -269,11 +370,13 @@ def _static(query, repository, now, section=''):
                     + ((InfoRow('命中的加成', matches[r.id], kind='fact'),) if matches.get(r.id) else ())
                     + _related_rows(r, catalog, include_songs=False)) for r in records)
     title = '日服 · 历史活动' if mode == 'history' else '日服 · 活动列表' if mode == 'list' else '日服 · 活动候选'
-    subtitle = f'共 {len(records)} 个 · 日本时间 UTC+9'
+    count = f'匹配 {len(records)} 期' if filters else f'共 {len(records)} 个'
+    subtitle = count + ' · 日本时间 UTC+9'
     visual_notes = footer(catalog, diagnostics=False)
     if filter_text:
         subtitle += '\n' + filter_text
-        visual_notes = (*visual_notes, notes[-1])
+        if coverage:
+            subtitle += '\n' + coverage
     return answer((list_view(title, rows, subtitle=subtitle, notes=notes,
                             presentation='activity', visual_footer=visual_notes),))
 
@@ -304,7 +407,7 @@ def _current(server, repository, section=''):
             command = ''
             body += ('单曲榜未开放或尚未采集。',)
         else:
-            command = f"/查榜线 {'hk' if server == 'tw' else server} 歌曲ID={song.music_id}"
+            command = f"/查榜线 {'hk' if server == 'tw' else server} 锁定活动{event.event_id} 歌曲ID={song.music_id}"
         rows.append(InfoRow(song.title, body, song.jacket, command, '挑战歌曲', kind='song'))
     if not event.songs:
         rows.append(InfoRow('挑战歌曲', ('当前资料没有挑战歌曲榜。',)))
