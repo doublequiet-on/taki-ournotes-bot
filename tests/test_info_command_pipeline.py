@@ -17,6 +17,35 @@ from ournotes_bot.rendering.info_layout import InfoPage
 
 
 class InfographicPipelineTests(unittest.TestCase):
+    def test_scoring_process_uses_activity_directory_when_system_temp_is_unavailable(self):
+        import hashlib
+        import sys
+
+        from ournotes_bot.sources.haneoka import activity_infographic as infographic
+        from ournotes_bot.sources.errors import ChartDataError
+
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / 'activity-infographic'
+            directory.mkdir()
+            # A real child process exchanges JSON through the same handles as Node.
+            runner = Path(root) / 'activity_infographic_engine.cjs'
+            runner.write_text("import json, sys\npayload = json.load(sys.stdin)\n"
+                              "if payload.get('fail'): sys.exit(2)\n"
+                              "json.dump([payload['eventId']], sys.stdout)\n", encoding='utf-8')
+            wasm = b'fixture engine'
+            checksum = hashlib.sha256(wasm).hexdigest()
+            fetch = Mock(return_value=(wasm, {}))
+            with (patch.dict('os.environ', {'OURNOTES_INFOGRAPHIC_NODE': sys.executable}),
+                  patch.object(infographic, '__file__', str(runner)),
+                  patch.object(infographic, 'ENGINE_SHA256', checksum),
+                  patch.object(tempfile, 'tempdir', None),
+                  patch.object(tempfile, '_get_default_tempdir', side_effect=FileNotFoundError('No usable temporary directory'))):
+                self.assertEqual(infographic.run_engine({'eventId': 6}, directory, fetch), [6])
+                with self.assertRaisesRegex(ChartDataError, 'activity scoring failed'):
+                    infographic.run_engine({'fail': True}, directory, fetch)
+            self.assertEqual(list(directory.iterdir()), [directory / (checksum + '.wasm')])
+            fetch.assert_called_once()
+
     def test_cold_start_populates_the_latest_ended_activity(self):
         from ournotes_bot.application.activity_infographic import ActivityInfographic
 
