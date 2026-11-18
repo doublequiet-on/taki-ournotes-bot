@@ -573,6 +573,7 @@ def _calendar(server, mode, repository, now):
     evidence_expires_at = None
     time_status = 'unavailable'
     exact_time = None
+    calendar_source_url = None
     active_tie = len(active) > 1
     recent_tie = len(ended) > 1 and ended[0].end_at == ended[1].end_at
     next_tie = len(future) > 1 and future[0].start_at == future[1].start_at
@@ -625,6 +626,7 @@ def _calendar(server, mode, repository, now):
                 time_status = 'exact' if mode == '下期' else 'related'
                 if mode == '下期':
                     exact_time = CalendarTime(announced.title, announced.start_at)
+                    calendar_source_url = announced.url
                 lines = [line for line in lines if '还不能确定下一期开启时间' not in line]
                 lines.append(f'公告预告《{announced.title}》将于 {stamp(announced.start_at)} 开始。')
                 lines.append(f'[查看活动公告]({announced.url})')
@@ -635,7 +637,7 @@ def _calendar(server, mode, repository, now):
         lines.append('当前使用旧缓存，时间可能已有调整。')
     text = '\n'.join((label + ' · 静态活动日程', *lines))
     return InfoAnswer(text, evidence_expires_at=evidence_expires_at,
-                      calendar_time_status=time_status, calendar_time=exact_time)
+                      calendar_time_status=time_status, calendar_time=exact_time, calendar_source_url=calendar_source_url)
 
 
 def execute_activity(query, repository, *, now=None):

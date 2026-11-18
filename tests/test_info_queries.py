@@ -736,6 +736,11 @@ class ActivityAnnouncementTests(unittest.TestCase):
         from datetime import datetime, timezone
         self.assertEqual(name, '次のステージ')
         self.assertEqual(stamp, datetime(2026,10,30,6,tzinfo=timezone.utc).timestamp())
+        decorated = '✦ 開催期間2026/10/30(金) 15:00 ～ 2026/11/07(土) 14:59'
+        self.assertEqual(announced_time({**row, 'text':decorated}, 'jp'), (name, stamp))
+        self.assertIsNone(announced_time({**row, 'text':'表示対象の開催期間2026/10/30(金) 15:00'}, 'jp'))
+        self.assertIsNone(announced_time({**row, 'text':decorated+'\n'+row['text']}, 'jp'))
+
         for change in ({'text_truncated':True}, {'text':'【ランキング結果集計期間】\n2026/10/30(金) 15:00'},
                        {'text':'2026/10/30(金) 15:00'}, {'title':'イベント「次のステージ」延期のお知らせ'},
                        {'text':row['text']+'\n延期となります'}, {'text':'【イベント開催期間】\n2026/02/30 15:00'}):

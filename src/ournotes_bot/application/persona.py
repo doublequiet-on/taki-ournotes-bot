@@ -157,7 +157,7 @@ _ACTIVITY_REGIONS = re.compile(_ACTIVITY_REGION, re.I)
 _ACTIVITY_CLAUSE = re.compile(
     rf'{_EVIDENCE_CLAUSE.pattern}|(?<=[始束间間期])[啊呀呢吗嗎嘛吧\s]*、\s*(?=(?:{_ACTIVITY_REGION}))', re.I)
 _LIVE_ACTIVITY_TIME = re.compile(
-    rf'(?P<current>这期|這期|本期|当前|當前|现在|現在|最近)?(?:的)?\s*'
+    rf'(?P<current>下(?:一)?期|这期|這期|本期|当前|當前|现在|現在|最近)?(?:的)?\s*'
     rf'(?:(?:{_ACTIVITY_REGION})(?:\s*(?:和|与|跟|以及|及|、)\s*(?:{_ACTIVITY_REGION}))*(?:的)?)?\s*'
     r'活[动動](?:的)?\s*'
     r'(?:(?:什么时候|啥时候|哪天|哪日|何时|几号|幾號|几点|幾點)(?P<verb>开始|開始|结束|結束)|'
@@ -225,14 +225,20 @@ def activity_time_intent(question):
             standalone = False
             regions = []
             continue
+        fields = match.groupdict()
+        verb = '开始' if (fields.get('verb') or fields.get('field')) in ('开始', '開始') else '结束'
+        if fields.get('current') in ('下期', '下一期'):
+            if verb != '开始':
+                standalone = False
+                regions = []
+                continue
+            verb = '下期开始'
         # Keep an explicitly named region across consecutive calendar questions.
         regions = _ACTIVITY_REGIONS.findall(clause) or regions or ['日服']
         labels = [
             {'jp': '日服', 'intl': '国际服'}.get(
                 CALENDAR_SERVERS.get(name.casefold().replace('國', '国').replace('臺', '台')), name)
             for name in regions]
-        fields = match.groupdict()
-        verb = '开始' if (fields.get('verb') or fields.get('field')) in ('开始', '開始') else '结束'
         questions.extend((label, verb) for label in labels)
         days.add(fields.get('before') or fields.get('after') or '')
     pairs = tuple(dict.fromkeys(questions))

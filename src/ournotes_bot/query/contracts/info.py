@@ -72,6 +72,7 @@ class InfoAnswer:
     original_image: bytes | None = None
     calendar_time_status: Literal["exact", "related", "unavailable"] | None = None
     calendar_time: CalendarTime | None = None
+    calendar_source_url: str | None = None
 
 
 def row_text(row: InfoRow) -> str:
