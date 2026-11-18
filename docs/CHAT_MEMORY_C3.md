@@ -18,7 +18,7 @@
 
 | 方法 | 返回与限制 |
 |---|---|
-| `search(scope, query, limit=8, before_ms=None)` | 返回 `status`、普通消息列表、`source_kind=group_dialogue` 和 revision；query 最多 120 字，limit 最多 20。FTS 操作符作为普通文本。 |
+| `search(scope, query, limit=8, before_ms=None, recall_from=None)` | 默认要求全部查询词命中。聊天工具传入当前消息 ID 作为 `recall_from`，排除提问自身；若没有完整命中，则返回至少命中两个不同多字符线索的原文，先按命中数、再按时间排序。重复或互相包含的命中只计一次。query 最多 120 字，limit 最多 20，FTS 操作符作为普通文本。返回消息携带原发言者、时间和消息 ID。 |
 | `read(scope, message_ids)` | 返回仍保留的当前群消息；最多 48 个 ID，跨群不存在状态不泄露另群内容。 |
 | `recent(scope, limit=48, max_bytes=24576, since_ms=None)` | 按实际源时间排序的有界规范化消息列表，用于重启恢复。 |
 | `put_summary(scope, summary_id, text, source_message_ids)` | 所有来源须仍有效，返回明确来源及最早源的到期时刻；不生成摘要、不调用模型。 |

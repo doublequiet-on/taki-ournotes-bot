@@ -89,8 +89,9 @@ SOURCE_SEMANTICS = '''
 '''
 
 RESEARCH_SEMANTICS = '''
-面对比较、多项查询和连续修改，使用 research_task 维护本次目标、对象顺序和所需字段。宿主提供的 current_entities 和上轮任务引用已确认对象身份，可直接 read_entity_fields，不必重复 site_search/site_read；没有身份时才用站内搜索确认。research_task 和 read_entity_fields 可在同次回复连续调用，最多两个对象可一次读完。第二张、换成另一张等以 targets 顺序和当前消息为准，变更时更新任务。谱面条件用 requirements.difficulty 保存；后续只改对象时继承未改的难度，不重复追问。歌曲等级和Note比较用 level/notes 字段；song_metrics 用于全曲筛选排序，不能代替多对象字段比较。闲聊不创建任务。
-工具返回 coverage 是实际读取覆盖情况。多项知识要求按条件拆开；读完知识后，可在 research_task 的对应要求中用 evidence 关联确实支持该对象和条件的 chunk_id。没有对象时 entity_ref 填空串。可同时更新任务和查询下一项。缺资料时回答已查部分并指出缺项。用户说不用了、先这样时，用 research_task cancel 结束当前任务。明确换题时使用当前对象。
+比较、多项查询和连续修改用 research_task 记录目标、对象顺序和字段。current_entities 或上轮任务已确认身份时直接 read_entity_fields，否则先站内查证。research_task 与 read_entity_fields 可同轮调用，一次读两个对象。“第二张”“换一张”按 targets 顺序和当前消息更新。谱面难度存 requirements.difficulty，只换对象时继承难度。歌曲等级和Note用 level/notes；song_metrics 用于全曲筛选排序。闲聊不建任务。
+可能属于ON的规则先按对象查 knowledge_search。现实活动看主办方通知；来源不明就问活动名或原文。只有问题或上下文指向本群旧发言、经历或约定才查群记忆，外部资料缺失不算线索。
+多项规则在 research_task 按条件分项；阅读后用 set 提交全部要求，evidence 只绑定支持该项的已读 chunk_id，缺项留空。知识项 knowledge=true，沿用已确认实体；无实体时 entity_refs=[]、绑定的 entity_ref 为空串。无字段填 fields=[]，无难度填空串。按 coverage 补查或说明缺项；单项可直接答。用户取消用 research_task cancel，换题以当前对象为准。
 '''
 
 
@@ -426,7 +427,7 @@ def chat_tools():
             if name=='site_search' else '读取本轮返回的 handle，可继续阅读已知关联。'))
     tool=tools['knowledge_search']
     tools[tool.name]=replace(tool,schema=obj({**tool.schema['properties'],'query':string(120)},tool.schema['required']),
-        description='查审核ON知识。query可改写；近期知识追问followup=true，新问题false。若返回范围候选，结合问题判断条件后再次查询。')
+        description='查已审核的 ON 规则、适用条件和例外；用户请你查规定时可直接用对象名试查。query可改写；近期知识追问followup=true，新问题false。若返回范围候选，结合问题判断条件后再次查询。')
     return tools
 
 
@@ -1414,7 +1415,7 @@ class ChatAgent:
         if vision is not None:
             registry['image_read']=Tool('image_read','按本轮上下文中原消息ID重读仍有效的本群图片，用于比较或追问；保持原作者。缓存过期时返回不可用，不能读取任意URL。',
                 obj({'message_id':string(256)},('message_id',)),'image')
-        registry['group_memory_search']=Tool('group_memory_search','检索本群最近30天Taki参与过的对话；区分发言者、实际送达回复和外部事实。可改写query。',
+        registry['group_memory_search']=Tool('group_memory_search','有回忆线索时查本群近30天Taki参与过的发言或约定。query 用旧消息可能原样出现的对象名；记不清原话就先只搜这个名称。外部规则来源不明时直接澄清。',
             obj({'query':string(120)},('query',)),'memory')
         registry['group_memory_read']=Tool('group_memory_read','读取本群指定消息ID及其发言者；仅支持已保存的参与片段。',
             obj({'message_ids':{'type':'array','items':string(256),'minItems':1,'maxItems':8}},('message_ids',)),'memory')
@@ -2120,7 +2121,7 @@ class ChatAgent:
                     'images':loaded,'image_detail':vision.detail}},leases
             elif tool.kind=='memory':
                 # SQLite remains on its owning event-loop thread.
-                output=(self.store.search(work.request.scope,args['query'],limit=8) if call.name=='group_memory_search'
+                output=(self.store.search(work.request.scope,args['query'],limit=8,recall_from=work.request.message_id) if call.name=='group_memory_search'
                         else self.store.read(work.request.scope,args['message_ids']))
                 while output['messages'] and len(json.dumps(output,ensure_ascii=False).encode())>24576:
                     output['messages'].pop()
