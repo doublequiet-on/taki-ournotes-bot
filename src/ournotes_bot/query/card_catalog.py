@@ -650,7 +650,10 @@ def execute_card_request(req, repository):
         if unknown_ids:
             ids = "、".join(str(ident) for ident in sorted(unknown_ids))
             return CardAnswer(req, error=f"未找到角色 ID {ids}。", status="unknown_entity", cache_state=cache_state)
-    cards = catalog.support_cards if req.support else catalog.cards
+    # A role ID must be checked against the card links from the same publication.
+    # Other requests use the repository's current query view, including on cache hits.
+    card_source = catalog if req.filters.character_ids else repository
+    cards = card_source.support_cards if req.support else card_source.cards
     if req.card_id is not None:
         matches = [c for c in cards if c.id == req.card_id]
         if len(matches) > 1:
