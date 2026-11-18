@@ -1,4 +1,4 @@
-# L3: Persist the observed JP activity and one atomically replaced JPEG per activity.
+# L3: Persist the observed JP activity and atomically replace JPEGs keyed by schedule.
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
@@ -23,7 +23,7 @@ class ActivityPeriod:
 
     @property
     def image_name(self):
-        return f'jp-{self.event_id}-{self.start}.jpg'
+        return f'jp-{self.event_id}-{self.start}-{self.end}.jpg'
 
     def active(self, now):
         return self.start / 1000 <= now <= self.end / 1000

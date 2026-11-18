@@ -35,10 +35,7 @@ class ActivityInfographic:
         if not event.start_ms or not event.end_ms:
             return {'code': 'pending'}
         period = ActivityPeriod(event.event_id, event.title, event.start_ms, event.end_ms)
-        now = self.clock()
-        if not period.active(now) and not rebuild:
-            return {'code': 'empty'}
-        if period.start / 1000 > now:
+        if period.start / 1000 > self.clock():
             return {'code': 'empty'}
         try:
             last = self.store.period()
@@ -46,9 +43,9 @@ class ActivityInfographic:
             last = None  # A verified current event can replace a malformed manifest.
         if last and period.start < last.start:
             return {'code': 'stale'}
-        if last and last.image_name == period.image_name and last.end == period.end and self.store.ready(last) and not rebuild:
+        if last and last.image_name == period.image_name and self.store.ready(last) and not rebuild:
             return {'code': 'cached', 'event_id': period.event_id}
-        if last is None or last.image_name != period.image_name:
+        if last is None or (last.event_id, last.start) != (period.event_id, period.start):
             self.store.observe(period)
         song_ids = tuple(dict.fromkeys(song.music_id for song in event.songs if song.enabled))
         with public_http_scope(), game_assets(partial(asset_bytes, cache_dir=self.data_root / 'game-assets')):
@@ -59,7 +56,7 @@ class ActivityInfographic:
                     period = ActivityPeriod(period.event_id, title, period.start, period.end)
             image = self.render(period, data, load=visual_asset)
         check_cancelled()
+        self.store.publish(period, image)
         if self.store.period() != period:
             self.store.observe(period)
-        self.store.publish(period, image)
         return {'code': 'ready', 'event_id': period.event_id, 'size': len(image)}
