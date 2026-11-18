@@ -190,9 +190,10 @@ class ProactiveChat:
             group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS', '').split(',')
             if group_id.strip()
         )
-        self.one_pass_groups = self.lightweight_groups.intersection(
-            group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_ONE_PASS_GROUPS', '').split(',')
-        )
+        settings = agent.runtime.backend.settings
+        compact_group = getattr(settings, 'hermes_pilot_group', '') if getattr(settings, 'hermes_compact_standby', False) else ''
+        one_pass = os.getenv('OURNOTES_PROACTIVE_ONE_PASS_GROUPS', compact_group)
+        self.one_pass_groups = self.lightweight_groups.intersection(group_id.strip() for group_id in one_pass.split(','))
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json',authority=agent.runtime.admin.db,require_authority=True)
 

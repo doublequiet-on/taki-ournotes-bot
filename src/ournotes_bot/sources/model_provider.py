@@ -342,6 +342,8 @@ class _TransportTrace:
                 ('upload_ms','upload_start','upload_end'),('wait_headers_ms','upload_end','headers'),
                 ('read_ms','headers','complete')):
             if start in self.times:data[name]=elapsed(self.times[start],self.times.get(stop,end))
+        if 'upload_end' in self.times:
+            data['request_sent_ms']=elapsed(self.started,self.times['upload_end'])
         if self.status is not None:data['http_status']=self.status
         if self.request_id is not None:data['provider_request_id']=self.request_id
         if self.http_version is not None:data['http_version']=self.http_version

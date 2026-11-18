@@ -8086,6 +8086,17 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.services.policy.return_value=self.policy
         self.agent.proactive.lightweight_groups=frozenset({'g1'})
 
+    def test_compact_one_pass_default_requires_lightweight_membership_and_allows_opt_out(self):
+        from ournotes_bot.application.chat_proactive_runtime import ProactiveChat
+        self.backend.settings=replace(self.backend.settings,hermes_compact_standby=True,hermes_pilot_group='g1')
+        with patch.dict(os.environ,{'OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS':'g1,g2'}):
+            os.environ.pop('OURNOTES_PROACTIVE_ONE_PASS_GROUPS',None)
+            self.assertEqual(ProactiveChat(self.agent).one_pass_groups,{'g1'})
+            os.environ['OURNOTES_PROACTIVE_ONE_PASS_GROUPS']=''
+            self.assertFalse(ProactiveChat(self.agent).one_pass_groups)
+            os.environ['OURNOTES_PROACTIVE_ONE_PASS_GROUPS']='g2,g3'
+            self.assertEqual(ProactiveChat(self.agent).one_pass_groups,{'g2'})
+
     async def test_public_game_lookup_prefers_reviewed_local_answer(self):
         self.enable_lightweight_fact_fixture()
         self.agent.proactive.one_pass_groups=frozenset({'g1'})
@@ -8100,6 +8111,15 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidate[0].evidence_route,'public_lookup')
         self.assertTrue(plan['send_allowed'],plan)
         self.assertEqual(len(attempts),2)
+        db=self.backend.diagnostics.db
+        timings=[json.loads(row[0]) for row in db.execute(
+            "SELECT data FROM chat_events WHERE request_id=? AND kind='attempt_timing' ORDER BY id",(plan['request_id'],))]
+        self.assertEqual([row['lane'] for row in timings],['evidence','evidence'])
+        for row in timings:
+            offsets=[row[name] for name in ('permit_wait_ms','permit_granted_ms','http_start_ms','http_done_ms','attempt_done_ms')]
+            self.assertEqual(offsets,sorted(offsets))
+        self.assertTrue(db.execute("SELECT 1 FROM chat_events WHERE request_id=? AND kind='reply_ready'",
+                                   (plan['request_id'],)).fetchone())
         knowledge.retrieve.assert_called_once()
 
     async def test_public_game_lookup_searches_once_after_local_miss(self):

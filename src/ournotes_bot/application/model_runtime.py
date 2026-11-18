@@ -581,6 +581,8 @@ class ModelRuntime:
         started=False;began=time.monotonic();kind='generation' if not tools else 'routing';transport={}
         work.model_stage=('generation' if getattr(work,'proactive_generation',False)
                           else 'decision' if work.proactive is not None else 'model')
+        marks = {}
+        work.hermes_claim_started = work.hermes_claim_finished = None
         def validate_dispatch():
             self.check(work,deadline,leases)
             if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
@@ -588,7 +590,9 @@ class ModelRuntime:
         async def dispatch():
             nonlocal started
             validate_dispatch()
+            marks['permit_wait'] = time.monotonic()
             permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
+            marks['permit_granted'] = time.monotonic()
             validate_dispatch()
             require(time.monotonic()<permitted_until,'permission_expired')
             try:
@@ -600,8 +604,12 @@ class ModelRuntime:
             if getattr(work,'hermes_chat',False):
                 work.hermes_provider_started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
-            return await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
-                                          max(.001,deadline-time.monotonic()))
+            marks['http_start'] = time.monotonic()
+            try:
+                return await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
+                                              max(.001,deadline-time.monotonic()))
+            finally:
+                marks['http_done'] = time.monotonic()
         try:
             if getattr(work,'hermes_chat',False) and not getattr(work,'hermes_native_fallback',False):
                 try:
@@ -649,6 +657,15 @@ class ModelRuntime:
                 self.usage.settle(attempt,Usage(),code,actions=(ProviderAction('web_search',None),) if web is not None else ())
             raise
         finally:
+            if work.proactive is not None:
+                marks.update(claim_start=work.hermes_claim_started, claim_done=work.hermes_claim_finished,
+                             attempt_done=time.monotonic())
+                offsets = {key+'_ms': min(3600000, max(0, round((stamp-began)*1000)))
+                           for key, stamp in marks.items() if stamp is not None}
+                lane = ('continuation' if work.continuation else 'evidence' if getattr(work.proactive,'evidence_route','')
+                        else 'ordinary')
+                self.backend.diagnostics.chat_event(work.request.request_id, 'attempt_timing', self.backend.clock(),
+                    attempt_id=attempt, lane=lane, **offsets)
             if transport:
                 data={**transport,'attempt_id':attempt,'model_stage':work.model_stage,
                       'input_images':sum(len(message.get('images',())) for message in messages)}
