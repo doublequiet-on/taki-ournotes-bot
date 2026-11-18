@@ -15,7 +15,7 @@ from ournotes_bot.domain.info_catalog import ActivityInfo
 from ournotes_bot.query.event_cutoff_query import execute_cutoff, parse_cutoff, parse_natural_cutoff
 from ournotes_bot.rendering.event_cutoff_visuals import render_cutoff
 from ournotes_bot.sources.cutoff_history import CutoffHistory, OpenCutoffHistory, HaneokaCutoffHistory, SourceHistory
-from ournotes_bot.sources.moenotes_events import EventCutoffRepository, EventSnapshot, EventSong, BoardSnapshot
+from ournotes_bot.sources.moenotes_events import EventCutoffRepository, EventSnapshot, EventSong, BoardSnapshot, SourceError
 
 STAMP = 1790937673000
 
@@ -88,6 +88,82 @@ class ArchiveTests(unittest.TestCase):
                     self.assertIn('/查榜线 jp id12 总榜', combined.text)
                 self.assertEqual(self.ask('id12 单曲 1-1').boards[0].score(1), 100)
                 self.assertEqual(self.ask('id12 总榜 1-1').total.score(1), 9000)
+
+    def test_same_id_total_archives_are_matched_by_the_selected_record_before_enrichment(self):
+        from ournotes_bot.sources.total_rankings import (TotalRankingHistory, TotalRankingRepository,
+                                                         TotalRankingSnapshot, event_key)
+        store = TotalRankingHistory(self.root / 'total.sqlite3', 'tracker', min_free_mb=0)
+        self.source.total_rankings = TotalRankingRepository(store)
+        self.repo.capture_catalog = lambda: SimpleNamespace(activities=(
+            ActivityInfo(12, '共通名称', {'ja': '同一别名'},
+                         start_at=self.event.start_ms / 1000, end_at=self.event.end_ms / 1000),), songs=())
+        for shift, title, score in ((0, '原记录', 7000), (86400000, '延期记录', 9000)):
+            event = replace(self.event, start_ms=self.event.start_ms + shift, end_ms=self.event.end_ms + shift,
+                            title=title, total_ranking_enabled=True)
+            stamp = STAMP + shift
+            total = TotalRankingSnapshot(event_key(event), 'tracker', (score,), stamp, stamp, received_ms=stamp)
+            self.assertEqual(store.record(event, total), 'valid')
+        for term in ('id12', '活动=记录', '活动=同一别名'):
+            self.assertEqual(self.ask(term).status, 'ambiguous', term)
+        matched = self.ask('活动=原记录 1-1')
+        self.assertEqual(matched.status, 'success', matched.text)
+        self.assertEqual((matched.total.score(1), matched.boards[0].score(1)), (7000, 100))
+        other = self.ask('活动=延期记录 1-1')
+        self.assertEqual(other.status, 'data_unavailable', other.text)
+        self.assertIn('活动="延期记录" 总榜', other.text)
+        self.assertEqual(self.ask('id12 活动="延期记录" 总榜 1-1').total.score(1), 9000)
+        self.assertEqual(self.ask('id12 单曲 1-1').boards[0].score(1), 100)
+        # Matching catalog dates cannot stand in for missing dates in the song archive.
+        with closing(sqlite3.connect(self.history.path)) as db, db:
+            db.execute('DELETE FROM event_metadata')
+        self.assertIn('缺少可核对', self.ask('活动=原记录 1-1').text)
+        self.assertEqual(self.ask('活动=同一别名 单曲 1-1').boards[0].score(1), 100)
+
+    def test_missing_total_index_cannot_use_catalog_dates_to_join_an_unknown_song_archive(self):
+        from ournotes_bot.sources.total_rankings import TotalRankingHistory, TotalRankingRepository
+        store = TotalRankingHistory(self.root / 'total.sqlite3', 'tracker', min_free_mb=0)
+        self.source.total_rankings = TotalRankingRepository(store)
+        self.repo.capture_catalog = lambda: SimpleNamespace(activities=(
+            ActivityInfo(12, '活动', {}, start_at=self.event.start_ms / 1000, end_at=self.event.end_ms / 1000),), songs=())
+        with closing(sqlite3.connect(self.history.path)) as db, db:
+            db.execute('DELETE FROM event_metadata')
+        with patch.object(store, 'events', side_effect=SourceError('total_history_unavailable')), patch.object(
+                store, 'latest', side_effect=AssertionError('total archive identity unavailable')):
+            answer = self.ask('id12 1-1')
+        self.assertEqual(answer.status, 'success', answer.text)
+        self.assertEqual(answer.boards[0].score(1), 100)
+        self.assertIsNone(answer.total)
+
+    def test_song_source_or_provider_windows_cannot_disappear_before_total_join(self):
+        from ournotes_bot.sources.history_partitions import ProviderHistory
+        from ournotes_bot.sources.total_rankings import (TotalRankingHistory, TotalRankingRepository,
+                                                         TotalRankingSnapshot, event_key)
+        other = OpenCutoffHistory(self.root / 'open.sqlite3', min_free_mb=0)
+        shifted = replace(self.event, start_ms=self.event.start_ms + 86400000, end_ms=self.event.end_ms + 86400000,
+                          source='open')
+        self.record(other, shifted, shifted.songs[0], (999,), STAMP + 86400000)
+        store = TotalRankingHistory(self.root / 'total.sqlite3', 'tracker', min_free_mb=0)
+        event = replace(self.event, total_ranking_enabled=True)
+        self.assertEqual(store.record(event, TotalRankingSnapshot(event_key(event), 'tracker', (753,),
+                              STAMP, STAMP, received_ms=STAMP)), 'valid')
+        self.source.total_rankings = TotalRankingRepository(store)
+        sources = SourceHistory(self.history, other)
+        providers = ProviderHistory(self.history)
+        unrelated = replace(self.event, event_id='13')
+        self.record(self.history, unrelated, unrelated.songs[0], (432,))
+        with patch.object(providers, 'partitions', return_value=(other,)):
+            for history in (sources, providers):
+                self.source.history = history
+                self.assertIn('各来源保存的活动时间', self.ask('id12 1-1').text)
+                self.assertEqual(self.ask('id12 单曲 1-1').status, 'data_unavailable')
+                self.assertEqual(self.ask('id12 总榜 1-1').total.score(1), 753)
+                self.assertEqual(self.ask('id13 单曲 1-1').boards[0].score(1), 432)
+            with closing(sqlite3.connect(other.path)) as db, db:
+                db.execute('DELETE FROM event_metadata')
+            for history in (sources, providers):
+                self.source.history = history
+                self.assertIn('缺少可核对', self.ask('id12 1-1').text)
+                self.assertEqual(self.ask('id12 单曲 1-1').boards[0].score(1), 999)
 
     def test_parameters_any_order_round_trip_and_numeric_mode(self):
         for parts in itertools.permutations(('活动ID=12', 'jp', '3-3', '仅数值')):

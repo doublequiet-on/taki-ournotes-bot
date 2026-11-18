@@ -758,6 +758,7 @@ class InformationQueryTests(unittest.TestCase):
         source.total_rankings.capture.assert_called_once()
 
     def test_ended_activity_uses_confirmed_archived_total_and_omits_older_events(self):
+        from dataclasses import replace
         from unittest.mock import Mock
         from ournotes_bot.domain.total_rankings import TotalRankingSnapshot
         total = activity(4, '已结束有总榜', start=NOW - 2000, end=NOW - 100, ranking_modes=('挑战歌曲总榜',))
@@ -781,6 +782,15 @@ class InformationQueryTests(unittest.TestCase):
         source.total_rankings.history.events.return_value = (event,)
         source.total_rankings.history.latest.return_value = source.total_rankings.archived.return_value
         self.assertIn('/查榜线 jp id4 总榜', execute_activity('4', repo, now=NOW).text)
+        source.total_rankings.history.events.return_value = (replace(event, start_ms=event.start_ms - 1000), event)
+        selected = execute_activity('4', repo, now=NOW)
+        self.assertIn('T1  1,234', selected.text)
+        self.assertNotIn('/查榜线', selected.text)
+        source.total_rankings.history.events.return_value = (event, replace(event, songs=(EventSong('1', '10', '别曲'),)))
+        conflicts = execute_activity('4', repo, now=NOW)
+        self.assertIn('多份综合榜档案', conflicts.text)
+        self.assertNotIn('1,234', conflicts.text)
+        self.assertNotIn('/查榜线', conflicts.text)
         source.total_rankings.archived.assert_called_once()
 
     def test_current_activity_same_id_and_dates_can_attach_static_cards(self):

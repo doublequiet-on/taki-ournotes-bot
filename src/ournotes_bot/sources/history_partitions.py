@@ -9,8 +9,7 @@ import json
 import sqlite3
 from dataclasses import asdict, replace
 
-from .cutoff_history import HaneokaCutoffHistory, HistoryView
-from .moenotes_events import SourceError
+from .cutoff_history import HaneokaCutoffHistory, HistoryView, merge_archive_events
 
 CONTRACT = 'haneoka:challenge-ranking/2'
 TIMES = {'official': 'official_observed_via_haneoka', 'moenotes': 'bridge_fetched_via_haneoka'}
@@ -189,13 +188,7 @@ class ProviderHistory:
         events = {e.event_id: e for e in self.legacy.events(server)}
         for store in self.partitions():
             for event in store.events(server):
-                previous = events.get(event.event_id)
-                songs = {s.challenge_id: s for s in previous.songs} if previous else {}
-                for song in event.songs:
-                    if song.challenge_id in songs and songs[song.challenge_id].music_id != song.music_id:
-                        raise SourceError('history_identity_conflict')
-                    songs[song.challenge_id] = song
-                events[event.event_id] = replace(event, songs=tuple(songs.values()))
+                events[event.event_id] = merge_archive_events(events.get(event.event_id), event, prefer_new=True)
         return tuple(events.values())
 
     def latest(self, event, song, *, before_ms=None):

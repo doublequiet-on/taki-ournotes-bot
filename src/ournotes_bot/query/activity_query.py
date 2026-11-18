@@ -398,13 +398,15 @@ def _record_total_row(record, repository, now):
             return (stop is not None and stop.is_set()) or source.monotonic() >= deadline
 
         try:
-            captured = next((candidate for candidate in totals.history.events('jp')
-                             if (candidate.event_id, candidate.start_ms, candidate.end_ms)
-                             == (event.event_id, start, end)), None)
-            if captured is not None:
+            candidates = [candidate for candidate in totals.history.events('jp') if candidate.event_id == event.event_id]
+            matched = [candidate for candidate in candidates if (candidate.start_ms, candidate.end_ms) == (start, end)]
+            if len(matched) == 1:
+                captured = matched[0]
                 board = totals.history.latest(captured, should_stop=should_stop)
                 if board is not None:
-                    return _total_row(captured, board, historical=True, saved=True)
+                    return _total_row(captured, board, historical=True, saved=len(candidates) == 1)
+            elif len(matched) > 1:
+                return _total_row(event, None, historical=True, unavailable='同一活动时间有多份综合榜档案，无法确定对应记录。')
         except SourceError:
             pass  # A bad local history does not invalidate independent official evidence.
         # A positive catalog declaration is required; "pending" does not prove a board exists.
