@@ -64,6 +64,44 @@ class Fixture:
 
 
 class HaneokaCutoffTests(unittest.TestCase):
+    def test_official_total_keeps_exact_scores_and_rejects_foreign_snapshots(self):
+        from ournotes_bot.sources.total_rankings import TotalRankingHistory, TotalRankingRepository, fetch_haneoka_total
+        event = replace(self.source.event("jp", self.source.deadline()), total_ranking_enabled=True)
+        stamp = int(self.fixture.now * 1000)
+        body = {"region": "jp", "eventId": event.event_id, "provider": "official", "snapshotId": "official-1",
+                "observedAtMs": stamp - 1000, "fetchedAtMs": stamp, "serverTimeMs": stamp, "stale": False,
+                "rows": [{"rank": 1, "scoreExact": "9007199254740993", "score": 9007199254740992,
+                          "profileId": "123", "name": "player"}, None,
+                         {"rank": 1, "scoreExact": "0"}, {"rank": 4, "scoreExact": "bad", "score": 120}]}
+        store = TotalRankingHistory(self.path / 'official-total.db', 'haneoka', min_free_mb=0,
+                                    clock=lambda: self.fixture.now, compressed=True)
+        def transport(url, timeout):
+            self.assertTrue(url.endswith('/jp/events/1/total/latest'))
+            return json.dumps(body).encode(), {}
+        self.source.transport = transport
+        totals = TotalRankingRepository(store, fetch=lambda e, d: fetch_haneoka_total(self.source, e, d),
+                                        clock=lambda: self.fixture.now)
+        normalized = totals.capture(event, self.source.deadline())
+        self.assertEqual(normalized.scores, (9007199254740993, None, 0, None))
+        self.assertEqual(normalized.player_id(1), '123')
+        self.assertEqual(normalized.fetched_ms, stamp - 1000)
+        self.assertEqual(normalized.source_read_ms, stamp)
+        self.assertEqual(totals.sample(event, self.source.deadline()), 'valid')
+        self.assertEqual(totals.sample(event, self.source.deadline()), 'duplicate')
+        self.assertEqual(store.latest(event).snapshot_id, 'official-1')
+        self.assertEqual(store.read(event, (1,)).points[0].scores, (9007199254740993,))
+        for field, value in (('region', 'tw'), ('eventId', '2'), ('provider', 'moenotes'),
+                             ('challengeId', '11'), ('observedAtMs', None)):
+            with self.subTest(field=field):
+                previous = dict(body)
+                body[field] = value
+                try:
+                    with self.assertRaises(SourceError):
+                        fetch_haneoka_total(self.source, event, self.source.deadline())
+                finally:
+                    body.clear()
+                    body.update(previous)
+
     def test_c3_ties_positions_and_unknown_raw_ranks(self):
         self.fixture.rows = [{'rank': rank, 'score': score, 'profileId': str(i)}
                              for i, (rank, score) in enumerate(((1, 100), (1, 100), (3, 0)), 1)]
@@ -356,7 +394,7 @@ class HaneokaCutoffTests(unittest.TestCase):
                     self.assertEqual(board.age_seconds, 2)
                     self.assertEqual(board.status, "源榜单快照")
                     self.assertFalse(any("时钟" in note for note in board.notes))
-            answer = execute_cutoff(parse_cutoff("日服 歌曲ID=101 T1"),
+            answer = execute_cutoff(parse_cutoff("日服 T1"),
                                     SimpleNamespace(event_cutoffs=self.source, aliases={}))
             self.assertEqual(answer.status, "success")
             self.assertNotIn("时钟", answer.text)
@@ -549,12 +587,12 @@ class HaneokaCutoffTests(unittest.TestCase):
     def test_query_unknown_ordinal_id_and_rendering(self):
         repo = SimpleNamespace(event_cutoffs=self.source, aliases={})
         ordinal = execute_cutoff(parse_cutoff("日服 歌曲1"), repo)
-        self.assertEqual(ordinal.status, "data_unavailable")
-        self.assertIn("原序号", ordinal.text)
-        answer = execute_cutoff(parse_cutoff("日服 歌曲ID=101 T1"), repo)
+        self.assertEqual(ordinal.status, "invalid_arguments")
+        self.assertIn("去掉歌名", ordinal.text)
+        answer = execute_cutoff(parse_cutoff("日服 T1"), repo)
         self.assertEqual(answer.status, "success")
         self.assertIn("挑战ID 11", answer.text)
-        self.assertIn("Haneoka / MoeNotes", answer.text)
+        self.assertIn("Haneoka Game Records", answer.text)
         pages = render_cutoff(answer)
         self.assertTrue(pages[0].image)
 

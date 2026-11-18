@@ -17,7 +17,7 @@ import time
 import uuid
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -838,15 +838,19 @@ class EventCutoffRepository:
         except SourceError as exc:
             messages = {"pending": "来源采集中", "rate_limited": "来源限流，稍后重试", "not_found": "本曲暂无榜单", "budget": "本次查询预算已用尽"}
             if history:
-                history.failure(event.server, event.event_id, song.challenge_id, exc.code)
+                with self._board_history_writer():
+                    history.failure(event.server, event.event_id, song.challenge_id, exc.code)
             return BoardSnapshot(song, status=messages.get(exc.code, "本曲来源暂不可用"))
         if history and entry.late:
-            history.record(event, self._snapshot(event, song, entry.late))
+            with self._board_history_writer():
+                history.record(event, self._snapshot(event, song, entry.late))
         board = self._snapshot(event, song, entry)
         if history:
             if entry.fallback:
-                history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
-            stored = history.record(event, board)
+                with self._board_history_writer():
+                    history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
+            with self._board_history_writer():
+                stored = history.record(event, board)
             self._note_retrieval('history_result',stored)
             if stored == "conflict":
                 board = replace(board, scores=(), status="同一源时刻分数冲突，暂无可信当前值", quality="conflict")
@@ -916,5 +920,11 @@ class EventCutoffRepository:
                              freshness=freshness)
 
     def boards(self, event: EventSnapshot, songs: tuple[EventSong, ...], deadline: float) -> tuple[BoardSnapshot, ...]:
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        # Fetch each board concurrently, then serialize sibling writes to their shared history.
+        # The store keeps its bounded wait for other requests and processes.
+        with ThreadPoolExecutor(max_workers=3, initializer=setattr,
+                                initargs=(self._diagnostic_local, 'history_writer', threading.Lock())) as pool:
             return tuple(pool.map(lambda song: self.board(event, song, deadline), songs))
+
+    def _board_history_writer(self):
+        return getattr(self._diagnostic_local, 'history_writer', nullcontext())

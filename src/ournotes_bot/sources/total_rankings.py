@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -20,15 +21,18 @@ from contextlib import closing, nullcontext
 from dataclasses import asdict, replace
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 from ..domain.total_rankings import TotalRankingSnapshot
 from .cutoff_history import HistoryPoint, HistoryView
 from .moenotes_events import (API, EventSnapshot, EventSong, SERVERS, SourceError,
                               source_timestamp, ranking_player_detail, valid_ranking_detail, player_identity)
 from .json_validation import decode_json
+from .haneoka.event_cutoffs import player_detail as haneoka_player_detail
 
 CONTRACT = 'taki:total-ranking/1'
-MAX_SCORE = 2**53 - 1
+_MAX_SAFE_SCORE = 2**53 - 1
+MAX_SCORE = 2**63 - 1  # Exact signed 64-bit decimal scores from Haneoka.
 _HISTORY_LIMIT = 20000
 _HISTORY_BATCH = 16
 _CLOCK_PREFIX = 4096
@@ -59,6 +63,7 @@ def event_key(event):
 
 
 def validate(event, snapshot, source):
+    limit = MAX_SCORE if source == "haneoka" else _MAX_SAFE_SCORE
     if (not isinstance(snapshot, TotalRankingSnapshot) or snapshot.event_key != event_key(event)
             or snapshot.source != source or event.source != source or snapshot.contract != CONTRACT
             or type(snapshot.stale) is not bool or not isinstance(snapshot.scores,tuple) or len(snapshot.scores) > 100
@@ -66,11 +71,14 @@ def validate(event, snapshot, source):
             or not isinstance(snapshot.player_details,tuple)
             or any(detail is not None and not valid_ranking_detail(detail, event.server) for detail in snapshot.player_details)
             or snapshot.http_date_ms is not None and source_timestamp(snapshot.http_date_ms) != snapshot.http_date_ms
+            or snapshot.snapshot_id is not None and (not isinstance(snapshot.snapshot_id, str)
+                or not 0 < len(snapshot.snapshot_id) <= 1024)
+            or snapshot.source_read_ms is not None and source_timestamp(snapshot.source_read_ms) != snapshot.source_read_ms
             or type(snapshot.received_ms) is not int or not 0 <= snapshot.received_ms < 253402300799000
             or not isinstance(snapshot.quality,str) or snapshot.quality not in {'valid','conflict','stale','clock_unknown','outside_period'}
             or not isinstance(snapshot.status,str) or len(snapshot.status)>300
             or not isinstance(snapshot.notes,tuple) or any(not isinstance(n,str) or len(n)>300 for n in snapshot.notes)
-            or any(s is not None and (type(s) is not int or not 0 <= s <= MAX_SCORE) for s in snapshot.scores)
+            or any(s is not None and (type(s) is not int or not 0 <= s <= limit) for s in snapshot.scores)
             or any(type(t) is not int or not 0 < t < 253402300799000 for t in (snapshot.fetched_ms, snapshot.server_ms))
             or any(values and len(values) != len(snapshot.scores) for values in (snapshot.player_ids, snapshot.player_names, snapshot.player_details))):
         raise SourceError('invalid_total_snapshot')
@@ -304,25 +312,85 @@ def fetch_moenotes_total(source, event, deadline):
     for row in players:
         item = row if isinstance(row, dict) else {}
         score = item.get('score')
-        score = score if type(score) is int and 0 <= score <= MAX_SCORE else None
+        score = score if type(score) is int and 0 <= score <= _MAX_SAFE_SCORE else None
         player = item.get('playerData') if isinstance(item.get('playerData'), dict) else {}
         ident, name = player_identity(player.get('id'), player.get('name')) if score is not None else (None, None)
         scores.append(score)
         ids.append(ident)
         names.append(name)
         details.append(ranking_player_detail(item, event.server) if score is not None else None)
-    date = None
-    try:
-        parsed = parsedate_to_datetime(headers.get('date', ''))
-        if parsed.tzinfo is not None:
-            date = source_timestamp(int(parsed.timestamp() * 1000))
-    except (ValueError, TypeError, OverflowError):
-        pass
     return TotalRankingSnapshot(
         event_key(event), 'tracker', tuple(scores), fetched, server,
         received_ms=int(source.clock()*1000), player_ids=tuple(ids), player_names=tuple(names),
         stale=headers.get('x-stale', '').lower() in {'true', '1'},
-        http_date_ms=date, player_details=tuple(details))
+        http_date_ms=_http_date(headers), player_details=tuple(details))
+
+
+def _http_date(headers):
+    try:
+        parsed = parsedate_to_datetime(headers.get('date', ''))
+        if parsed.tzinfo is not None:
+            return source_timestamp(int(parsed.timestamp() * 1000))
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return None
+
+
+def fetch_haneoka_total(source, event, deadline):
+    """Adapt the official public total board without mixing point or song boards."""
+    if event.source != 'haneoka':
+        raise SourceError('invalid_total_identity')
+    key = event_key(event)
+    data, headers = source._json(
+        f'https://haneoka.org/api/v1/game/records/{event.server}/events/{event.event_id}/total/latest', deadline)
+    if (data.get('region') != event.server or data.get('eventId') != event.event_id
+            or data.get('provider') != 'official' or 'challengeId' in data
+            or type(data.get('stale')) is not bool):
+        raise SourceError('invalid_total_identity')
+    observed = source_timestamp(data.get('observedAtMs'))
+    fetched = source_timestamp(data.get('fetchedAtMs'))
+    server = source_timestamp(data.get('serverTimeMs'))
+    if not observed or not fetched or not server or observed > fetched + 1000 or fetched > server + 1000:
+        raise SourceError('invalid_total_time')
+    snapshot_id = data.get('snapshotId')
+    if snapshot_id is not None and (not isinstance(snapshot_id, str) or not 0 < len(snapshot_id) <= 1024):
+        raise SourceError('invalid_total_identity')
+    rows = data.get('rows')
+    if not isinstance(rows, list) or not 0 < len(rows) <= 100:
+        raise SourceError('invalid_total_snapshot')
+
+    scores, ids, names, details = [], [], [], []
+    previous = 0
+    invalid_scores = False
+    for position, row in enumerate(rows, 1):
+        if row is not None and not isinstance(row, dict):
+            raise SourceError('invalid_total_snapshot')
+        item = row or {}
+        rank = item.get('rank')
+        if rank is not None:
+            if type(rank) is not int or not max(1, previous) <= rank <= position:
+                raise SourceError('unknown_position')
+            previous = rank
+        raw = item.get('scoreExact', item.get('score'))
+        if 'scoreExact' in item:
+            score = int(raw) if isinstance(raw, str) and re.fullmatch(r'[0-9]{1,19}', raw) else None
+            score = score if score is not None and score <= MAX_SCORE else None
+        else:
+            score = raw if type(raw) is int and 0 <= raw <= _MAX_SAFE_SCORE else None
+        invalid_scores |= score is None and raw is not None
+        ident, name = player_identity(item.get('profileId'), item.get('name')) if score is not None else (None, None)
+        ids.append(ident)
+        names.append(name)
+        scores.append(score)
+        details.append(haneoka_player_detail(item) if score is not None else None)
+
+    notes = ('提供者：官方快照 · 名次按响应位置。',)
+    if invalid_scores:
+        notes += ('部分分数无法精确核对，保留原位空槽。',)
+    return TotalRankingSnapshot(key, 'haneoka', tuple(scores), observed, server,
+        received_ms=int(source.clock()*1000), player_ids=tuple(ids), player_names=tuple(names),
+        stale=data['stale'], notes=notes, http_date_ms=_http_date(headers), snapshot_id=snapshot_id,
+        source_read_ms=fetched, player_details=tuple(details))
 
 
 class TotalRankingHistory:
@@ -675,82 +743,131 @@ class TotalRankingHistory:
 class TotalRankingRepository:
     """fetch(event, deadline) must return the internal normalized contract above.
 
-    No adapter is installed by default. Queries update only current cache;
+    Queries update only current cache;
     sample() is the sole history writer, called at the existing sampler cadence.
     """
     def __init__(self, history, *, fetch=None, clock=time.time):
         if fetch is not None and not callable(fetch):
             raise ValueError('total-ranking adapter must be callable')
         self.history,self.fetch,self.clock=history,fetch,clock
-        self.lock=threading.RLock(); self.current={}; self.retry={}; self.last_errors={}
+        self._locks_guard = threading.Lock()
+        self._locks = WeakValueDictionary()
+        self.current = {}
+        self.retry = {}
+        self.last_errors = {}
+        self._rejected = {}
 
     @property
     def connected(self):
         return self.fetch is not None
 
     def unavailable_status(self, event):
-        code = self.last_errors.get(event_key(event))
+        try:
+            code = self.last_errors.get(event_key(event))
+        except SourceError:
+            return '综合榜活动身份或时间不可核验。'
         reason = {'upstream': '上游错误', 'pending': '来源仍在采集', 'not_found': '来源暂无快照',
                   'rate_limited': '来源限流', 'network': '来源网络暂不可用',
                   'unknown_position': '来源排名顺序不可核验', 'invalid_total_time': '来源时间不可核验',
-                  'total_time_regression': '来源时间倒退', 'total_conflict': '来源快照冲突'}.get(code, '来源暂不可用')
+                  'total_time_regression': '来源时间倒退', 'total_conflict': '来源快照冲突',
+                  'clock_unknown': '来源时间不可核验', 'outside_period': '快照不在有效活动期内'}.get(code, '来源暂不可用')
         return f'综合榜{reason}，暂无可信快照；未改查单曲榜。'
+
+    def _event_lock(self, key):
+        with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[key] = lock
+            return lock
 
     def capture(self, event, deadline):
         if not self.connected:
             return None
-        key=event_key(event); now=int(self.clock()*1000)
-        with self.lock:
-            cached=self.current.get(key) or self.history.cached(event)
-            if cached and 0 <= now-cached.received_ms < 60000:
-                raw=cached
-            elif self.retry.get(key,0)>now:
-                raw=cached
-            else:
+        board, _, _ = self._capture(event, deadline)
+        return board
+
+    def _capture(self, event, deadline):
+        key = event_key(event)
+        with self._event_lock(key):
+            cached = self.current.get(key) or self.history.cached(event)
+            now = int(self.clock() * 1000)
+            if cached and quality(event, cached, now) in {'clock_unknown', 'outside_period'}:
+                cached = None
+            raw = cached
+            if self.retry.get(key, 0) <= now and not (cached and 0 <= now-cached.received_ms < 60000):
+                self._rejected.pop(key, None)
                 try:
-                    raw=validate(event,self.fetch(event,deadline),self.history.source)
-                    now=int(self.clock()*1000)
-                    raw=replace(raw,received_ms=now,observed_scores=None,quality='valid')
-                    if cached and raw.fetched_ms < cached.fetched_ms:
+                    incoming = validate(event, self.fetch(event, deadline), self.history.source)
+                    now = int(self.clock() * 1000)
+                    incoming = replace(incoming, received_ms=now, observed_scores=None, quality='valid')
+                    state = quality(event, incoming, now)
+                    if state in {'clock_unknown', 'outside_period'}:
+                        self._rejected[key] = replace(incoming, quality=state)
+                        raise SourceError(state)
+                    if cached and incoming.fetched_ms < cached.fetched_ms:
                         raise SourceError('total_time_regression')
-                    if cached and raw.fetched_ms == cached.fetched_ms and (
-                        (raw.scores, raw.player_ids, raw.player_names, raw.player_details)
+                    if cached and incoming.fetched_ms == cached.fetched_ms and (
+                        (incoming.scores, incoming.player_ids, incoming.player_names, incoming.player_details)
                         != (cached.scores, cached.player_ids, cached.player_names, cached.player_details)
-                        or cached.quality=='conflict'
+                        or cached.quality == 'conflict'
                     ):
+                        # Both versions at this timestamp are untrustworthy.
+                        raw = replace(incoming, quality='conflict')
+                        self.history.save_current(event, raw)
+                        self.current[key] = raw
                         raise SourceError('total_conflict')
-                    self.current[key]=raw
-                    saved=self.history.save_current(event,raw)
-                    if saved not in {'cached','disabled'}:
-                        raw=replace(raw,notes=('综合榜当前缓存保存失败；本次结果仍可查看。',))
-                    self.retry.pop(key,None)
-                    self.last_errors.pop(key,None)
+                    saved = self.history.save_current(event, incoming)
+                    raw = incoming
+                    if saved not in {'cached', 'disabled'}:
+                        raw = replace(raw, notes=(*raw.notes, '综合榜当前缓存保存失败；本次结果仍可查看。'))
+                    self.current[key] = raw
+                    self.retry.pop(key, None)
+                    self.last_errors.pop(key, None)
                 except SourceError as exc:
-                    self.retry[key]=now+max(60000,exc.retry_after*1000)
-                    self.last_errors[key]=exc.code
-                    if exc.code=='total_conflict':
-                        raw=replace(raw,quality='conflict')
-                        self.current[key]=raw
-                        self.history.save_current(event,raw)
-                    else:
-                        raw=cached
+                    now = int(self.clock() * 1000)
+                    self.retry[key] = now + max(60000, exc.retry_after * 1000)
+                    self.last_errors[key] = exc.code
+            failure = self.last_errors.get(key)
+            rejected = self._rejected.get(key)
             if raw is None:
-                return None
-            state=quality(event,raw,now)
-            return replace(raw,scores=raw.scores if state=='valid' else (),observed_scores=raw.scores,quality=state,
-                           status='综合榜当前观测' if state=='valid' else '综合榜快照时间异常或过期，暂无可信当前值',
-                           notes=raw.notes+(('综合榜来源暂不可用，暂用同源缓存。',) if key in self.retry else ()))
+                return None, rejected, failure
+            state = quality(event, raw, now)
+            old_official = self.history.source == 'haneoka' and state == 'stale'
+            usable = state == 'valid' or old_official
+            fallback = failure is not None and state != 'conflict'
+            if usable:
+                status = ('综合榜刷新失败，显示最后可用观测' if fallback else
+                          '综合榜旧快照，显示最后可用观测' if old_official else '综合榜当前观测')
+            else:
+                status = '综合榜快照时间异常或过期，暂无可信当前值'
+            board = replace(raw, scores=raw.scores if usable else (), observed_scores=raw.scores,
+                            quality=state, status=status,
+                            notes=raw.notes+(('综合榜来源暂不可用，暂用同源缓存。',) if fallback else ()))
+            return board, rejected, failure
+
+    def archived(self, event, deadline):
+        """Read an explicitly known ended official board without publishing a partial event identity."""
+        if not self.connected or self.history.source != 'haneoka' or event.status != 'end':
+            return None
+        board = validate(event, self.fetch(event, deadline), self.history.source)
+        observed = observation_time(board)
+        if observed is None or observed < event.start_ms or board.fetched_ms > board.server_ms + 1000:
+            raise SourceError('invalid_total_time')
+        return board
 
     def sample(self, event, deadline):
         if not self.connected:
             return 'not_connected'
-        board=self.capture(event,deadline)
+        board, rejected, failure = self._capture(event, deadline)
+        if rejected is not None and (board is None or rejected.fetched_ms != board.fetched_ms):
+            return self.history.record(event, rejected)
         if board is None:
-            code = self.last_errors.get(event_key(event), 'unavailable')
-            self.history.failure(event,'total_'+code)
+            code = failure or 'unavailable'
+            self.history.failure(event, 'total_' + code)
             return code
-        if event_key(event) in self.retry and board.quality!='conflict':
-            self.history.failure(event,'total_source_fallback')
+        if failure and board.quality != 'conflict':
+            self.history.failure(event, 'total_source_fallback')
             return 'source_fallback'
-        stored=self.history.record(event,board)
-        return board.quality if board.quality!='valid' and stored in {'duplicate','valid'} else stored
+        stored = self.history.record(event, board)
+        return board.quality if board.quality != 'valid' and stored in {'duplicate', 'valid'} else stored

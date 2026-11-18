@@ -77,7 +77,8 @@ class HistorySampler:
                 observed=getattr(self.source,'read_event_observed',None)
                 event=observed(server,deadline)[0] if callable(observed) else self.source.event(server,deadline)
                 songs=[song for song in event.songs if song.enabled and song.collect_status in {'collecting','finalizing'}] if song_writable else []
-                sample_total=(total_writable and event_ranking_format(event).total_enabled is not False
+                total_enabled = event_ranking_format(event).total_enabled
+                sample_total=(total_writable and (total_enabled is True or total_enabled is None and event.source == 'tracker')
                               and event.status in {'nowOn','aggregation','result'})
                 if not songs and not sample_total:
                     self.discovery_after[server]=self.clock()+max(900,self.interval)

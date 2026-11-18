@@ -38,7 +38,7 @@ class CutoffQueryV2Tests(unittest.TestCase):
             self.assertEqual(parse_cutoff(request.command_label()), request)
         for query in ('总榜 单曲', '总榜 歌曲1', '总榜 歌曲ID=100118', '总榜 歌名="总榜"', '总榜 abc'):
             self.assertTrue(parse_cutoff(query).error, query)
-        self.assertEqual(parse_cutoff('歌名="总榜"').query, '总榜')
+        self.assertTrue(parse_cutoff('歌名="总榜"').error)
         self.assertEqual(parse_cutoff('单曲 20-40').board_scope, 'song')
 
     def test_activity_link_uses_live_only_when_the_locked_event_matches(self):
@@ -50,7 +50,7 @@ class CutoffQueryV2Tests(unittest.TestCase):
         archive = SimpleNamespace(events=Mock(return_value=(event,)), latest=Mock(return_value=board))
         source = self.source
         repository = SimpleNamespace(event_cutoffs=source)
-        request = parse_cutoff('锁定活动4 歌曲ID=100118 仅数值')
+        request = parse_cutoff('锁定活动4 仅数值')
         self.assertTrue(request.lock_event)
         self.assertEqual(parse_cutoff(request.command_label()), request)
         self.assertTrue(parse_cutoff('锁定活动4 id4').error)
@@ -69,7 +69,7 @@ class CutoffQueryV2Tests(unittest.TestCase):
             self.assertEqual(history.event.event_id, '4')
             self.assertEqual(history.boards[0].fetched_ms, board.fetched_ms)
             boards.assert_not_called()
-            archive.latest.assert_called_once()
+            self.assertEqual([call.args[1] for call in archive.latest.call_args_list], list(event.songs))
             current.return_value = replace(event, notes=(ACTIVITY_STALE_NOTE,))
             self.assertTrue(execute_cutoff(request, repository).historical)
             boards.assert_not_called()
@@ -145,9 +145,9 @@ class CutoffQueryV2Tests(unittest.TestCase):
     def ask(self, text=''):
         return execute_cutoff(parse_cutoff('/查榜线 ' + text), self.repo)
 
-    def test_server_song_rank_all_six_orders_and_dedup(self):  # A11/A14/A17
+    def test_server_scope_rank_all_six_orders_and_dedup(self):  # A11/A14/A17
         requests = []
-        for groups in itertools.permutations(('hk', '歌曲一', '100')):
+        for groups in itertools.permutations(('hk', '单曲', '100')):
             answer = self.ask(' '.join(groups))
             self.assertEqual(answer.status, 'success', answer.text)
             self.assertEqual(answer.request.server, 'tw')
@@ -156,12 +156,12 @@ class CutoffQueryV2Tests(unittest.TestCase):
             self.assertEqual(answer.boards[0].song.music_id, '103')
             requests.append(answer.request)
         self.assertTrue(all(r == requests[0] for r in requests))
-        self.assertEqual(self.ask('100 歌曲1 hk 国服 歌曲一 100').request, requests[0])
-        self.assertEqual(sum(u.endswith('/ranking') for u in self.fx.calls), 1)
+        self.assertEqual(self.ask('100 单曲 hk 国服 單曲 100').request, requests[0])
+        self.assertEqual(sum(u.endswith('/ranking') for u in self.fx.calls), 3)
 
     def test_range_and_modifier_all_orders(self):  # A07/A12/A20
-        canonical = self.ask('hk 歌曲二 20-40 仅数值')
-        for groups in itertools.permutations(('hk', '歌曲二', '20—40', '仅数值')):
+        canonical = self.ask('hk 单曲 20-40 仅数值')
+        for groups in itertools.permutations(('hk', '单曲', '20—40', '仅数值')):
             with patch.object(self.source.history, 'read', side_effect=AssertionError('history read')):
                 answer = self.ask(' '.join(groups))
             self.assertEqual(answer.request, canonical.request)
@@ -178,15 +178,14 @@ class CutoffQueryV2Tests(unittest.TestCase):
         self.assertEqual(exact.request.mode, 'range')
         self.assertIsNone(exact.request.target_rank)
 
-    def test_song_number_aliases_and_original_position(self):  # A03/A05/A13/A16
-        for text in ('歌曲2','歌曲二','歌2','第2首','第二首'):
-            answer = self.ask(text)
-            self.assertEqual(answer.request.mode,'trend')
-            self.assertEqual(answer.boards[0].song.music_id,'102')
-            self.assertIn('歌曲2',answer.text)
-        for text in ('歌曲0','歌曲4','歌曲-1','歌曲1.5'):
-            self.assertEqual(self.ask(text).status,'invalid_arguments',text)
-        self.assertEqual(len(self.ask('1').boards),3)
+    def test_old_song_selectors_fail_before_reading_any_source(self):
+        for text in ('歌曲2', '歌曲二', '歌2', '第2首', '第二首', '歌曲ID=101',
+                     '歌名="GO en 50-50 37"', '夢我夢中', '歌名="123"'):
+            answer = self.ask('hk ' + text)
+            self.assertEqual(answer.status, 'invalid_arguments', text)
+            self.assertIn('榜线按活动查询', answer.text)
+        self.assertFalse(self.fx.calls)
+        self.assertEqual(len(self.ask('1').boards), 3)
 
     def test_conflicting_and_invalid_slots_never_guess(self):  # A17/A18
         for text in ('jp hk 歌曲1','歌曲1 歌曲2','50 60','2 50','50 40-60',
@@ -194,35 +193,30 @@ class CutoffQueryV2Tests(unittest.TestCase):
                      '歌曲1 50 server=us','歌曲1 50 美服'):
             self.assertEqual(self.ask(text).status,'invalid_arguments',text)
 
-    def test_explicit_name_keeps_numbers_spaces_dashes_and_region_words(self):  # A19
-        self.fx.table_rows['jp']['MasterText'][1].update(japanese='GO en 50-50 37', simplifiedChinese='GO en 50-50 37')
-        answer = self.ask('50 歌名="GO en 50-50 37" jp')
-        self.assertEqual(answer.status,'success',answer.text)
-        self.assertFalse(answer.request.extra_queries)
-        self.assertEqual(answer.boards[0].song.music_id,'101')
-        self.assertEqual(answer.ranks,tuple(range(40,61)))
-        numeric_name = self.ask('歌名="123"')
-        self.assertEqual(numeric_name.boards[0].song.music_id,'103')
-        self.assertEqual(numeric_name.request.mode,'trend')
-        self.assertEqual(self.ask('123').status,'invalid_arguments')
-        self.assertEqual(self.ask('歌曲ID=103 50-50').boards[0].song.music_id,'103')
 
-    def test_ranked_queries_read_five_representative_ranks_and_record_boards(self):  # A20/A21
-        def boards_in_order(event, songs, deadline):
-            return tuple(self.source.board(event, song, deadline) for song in songs)
 
-        # The history writer can return busy when concurrent workers contend for its bounded lock.
-        with patch.object(self.source, 'boards', side_effect=boards_in_order), \
+    def test_ranked_queries_skip_trend_reads_and_still_record_boards(self):  # A20/A21
+        # Even when one SQLite transaction exceeds the store's external-contention budget,
+        # the other boards from this same response must still reach history.
+        import time
+        original_connect = self.source.history._connect
+        def slow_write(*, write=False):
+            if write:
+                time.sleep(0.22)
+            return original_connect(write=write)
+
+        with patch.object(self.source.history, '_connect', side_effect=slow_write), \
                 patch.object(self.source.history, 'read', wraps=self.source.history.read) as read:
             answer = self.ask('1-100')
-        self.assertEqual(read.call_count,3)
-        self.assertEqual(answer.history_ranks,(1,26,51,75,100))
+        read.assert_not_called()
+        self.assertEqual(answer.history_ranks, ())
         self.assertEqual(len(answer.ranks),100)
-        self.assertEqual(self.source.history.read(answer.event,answer.boards[0].song,(50,)).total,1)
+        for board in answer.boards:
+            self.assertEqual(self.source.history.read(answer.event, board.song, (50,)).total, 1)
         self.assertEqual(sum(u.endswith('/ranking') for u in self.fx.calls),3)
 
     def test_command_labels_preserve_modes_and_target(self):  # A27
-        for query in ('hk 歌曲二 100','歌曲2 50-50','歌曲1 T1,T10,T37','歌名="长歌名 37" 仅数值'):
+        for query in ('hk 单曲 100', '50-50', 'T1,T10,T37', '活动="长活动名 37" 仅数值'):
             answer = self.ask(query)
             label = QuerySpec('event_cutoff',cutoff_request=answer.request).command_label()
             again = self.ask(label.removeprefix('查榜线 '))
@@ -240,10 +234,10 @@ class CutoffQueryV2Tests(unittest.TestCase):
 
     def test_rank_table_does_not_enter_trend_renderer(self):  # A04/A05/A20
         with patch('ournotes_bot.rendering.cutoff_trends.render_trends',side_effect=AssertionError('trend drawing')):
-            pages = render_cutoff(self.ask('歌曲2 50'))
+            pages = render_cutoff(self.ask('50'))
         self.assertEqual(len(pages),1)
         self.assertIn('歌曲2',pages[0].text)
-        self.assertNotIn('歌曲1',pages[0].text)
+        self.assertIn('歌曲1',pages[0].text)
         for rank in range(40,61):
             self.assertIn(f'T{rank}：',pages[0].text)
 
@@ -285,14 +279,9 @@ class CutoffQueryV2Tests(unittest.TestCase):
         self.assertTrue(constrained[-1].context.remaining)
         self.assertEqual(sum(p.text=='other' for p in constrained[-1].context.remaining),4)
 
-    def test_names_and_equivalent_repeated_selectors_match_actual_identity(self):  # A17/A19
-        with patch('ournotes_bot.query.entity_lexicon._aliases',return_value={'song':{'同曲别名':'夢我夢中'}}):
-            answer = self.ask('歌曲1 歌名="夢我夢中" 歌名="同曲别名" 歌曲ID=101 50')
-        self.assertEqual(answer.status,'success',answer.text)
-        self.assertEqual(self.ask('歌曲1 歌名="长歌名 37"').status,'invalid_arguments')
-        self.assertEqual(self.ask('非本期歌曲').status,'empty')
 
-    def test_song_number_selects_challenge_identity_when_music_id_is_repeated(self):  # A15/A17
+
+    def test_repeated_music_id_preserves_both_challenge_boards(self):  # A15/A17
         import json
         original = self.source.transport
         def repeated(url, timeout):
@@ -304,25 +293,16 @@ class CutoffQueryV2Tests(unittest.TestCase):
             return raw, headers
         self.source.transport = repeated
         self.fx.table_rows['jp']['MasterChallengeMusic'][1]['liveMusicId'] = 101
-        answer = self.ask('歌曲2 50-50')
-        self.assertEqual(answer.status, 'success', answer.text)
-        self.assertEqual([(b.song.challenge_id, b.song.music_id) for b in answer.boards], [('2', '101')])
-        self.assertIn('歌曲2 · 夢我夢中', answer.text)
-        self.assertEqual(sum(u.endswith('/ranking') for u in self.fx.calls), 1)
-        first = self.ask('歌曲1 歌曲ID=101 歌名="夢我夢中" 50-50')
-        self.assertEqual([b.song.challenge_id for b in first.boards], ['1'])
-        for query in ('歌曲ID=101', '夢我夢中'):
-            ambiguous = self.ask(query)
-            self.assertEqual(ambiguous.status, 'ambiguous', query)
-            self.assertIn('歌曲编号', ambiguous.text)
-        overview = self.ask()
-        self.assertEqual([b.song.challenge_id for b in overview.boards], ['1', '2', '3'])
-        self.assertEqual([overview.song_label(b).split(' · ')[0] for b in overview.boards], ['歌曲1', '歌曲2', '歌曲3'])
+        overview = self.ask('50-50')
+        self.assertEqual([(b.song.challenge_id, b.song.music_id) for b in overview.boards],
+                         [('1', '101'), ('2', '101'), ('3', '103')])
+        self.assertIn('歌曲2 · 夢我夢中', overview.text)
+        self.assertEqual(sum(u.endswith('/ranking') for u in self.fx.calls), 3)
 
     def test_supported_range_separators_and_invalid_chinese_numbers(self):  # A07/A18
-        expected=self.ask('歌曲2 20-40').request
+        expected=self.ask('20-40').request
         for text in ('20—40','20 - 40','20～40','20到40','Ｔ２０－Ｔ４０','２０　～　４０'):
-            self.assertEqual(self.ask(text+' 歌曲二').request,expected,text)
+            self.assertEqual(self.ask(text).request,expected,text)
         for text in ('歌曲一二','歌曲十十','歌名="未闭合'):
             self.assertEqual(self.ask(text).status,'invalid_arguments',text)
 
@@ -333,9 +313,9 @@ class CutoffQueryV2Tests(unittest.TestCase):
         repo = SongRepository('https://offline.invalid',Path(self.tmp.name)/'main.json')
         repo.event_cutoffs = self.source
         parser = AIQueryParser(Settings('', '', 'https://offline.invalid',repo.cache_file,6,'','','https://offline.invalid',0))
-        expected = self.ask('歌曲一 hk 100')
+        expected = self.ask('hk 100')
         with patch.object(parser,'_request',side_effect=AssertionError('model called')) as model:
-            text,result = parser.answer_with_plan('/问 查榜线 100 hk 歌曲一',repo)
+            text,result = parser.answer_with_plan('/问 查榜線 100 hk',repo)
             self.assertEqual(result.cutoff.request,expected.request)
             self.assertEqual(text,expected.text)
             self.assertIn('不同服务器',parser.answer('/问 查榜线 hk jp 100',repo))
@@ -358,7 +338,7 @@ class CutoffQueryV2Tests(unittest.TestCase):
         self.assertEqual(answer.boards[0].score(2),None)
         self.assertEqual(answer.boards[0].score(3),0)
         self.assertFalse(answer.boards[1].scores)
-        self.assertIn('歌曲3',self.ask('歌曲3 3-3').text)
+        self.assertIn('歌曲3',self.ask('3-3').text)
         pages=render_cutoff(answer)
         self.assertEqual(len(pages),1)
         self.assertIn('T2：暂无数据',pages[0].text)
@@ -494,7 +474,7 @@ class TotalRankingOfflineTests(unittest.TestCase):
         self.totals.capture(self.event,0)
         cached=self.totals.current[board.event_key]
         self.now+=61
-        self.totals.fetch=lambda e,d:replace(cached,scores=(99,)*100)
+        self.totals.fetch=lambda e,d:replace(cached,scores=(99,)*100,server_ms=int(self.now*1000))
         self.assertEqual(self.totals.capture(self.event,0).quality,'conflict')
         self.assertEqual(self.totals.sample(self.event,0),'conflict')
         self.assertFalse(self.history.read(self.event,(1,)).points)
@@ -526,7 +506,7 @@ class TotalRankingOfflineTests(unittest.TestCase):
         original=self.history.cached(self.event)
         changed=replace(original,player_ids=('11999999999',*original.player_ids[1:]))
         self.now+=61
-        restarted=TotalRankingRepository(self.history,fetch=lambda e,d:changed,clock=lambda:self.now)
+        restarted=TotalRankingRepository(self.history,fetch=lambda e,d:replace(changed,server_ms=int(self.now*1000)),clock=lambda:self.now)
         self.assertEqual(restarted.capture(self.event,0).quality,'conflict')
         self.assertEqual(restarted.sample(self.event,0),'conflict')
         self.assertFalse(self.history.read(self.event,(1,)).points)
@@ -555,6 +535,18 @@ class TotalRankingOfflineTests(unittest.TestCase):
             self.now+=300
             sampler.sample_once()
         self.assertTrue(self.history.read(self.event,(1,)).points[1].break_before)
+
+    def test_past_combined_board_keeps_total_when_song_scores_are_missing(self):
+        from ournotes_bot.sources.moenotes_events import BoardSnapshot
+        board = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        self.assertEqual(self.history.record(self.event, board), 'valid')
+        with patch.object(self.case.source.history, 'latest',
+                          side_effect=lambda event, song: BoardSnapshot(song, status='未采集')):
+            overview = self.case.ask('id4 100 仅数值')
+            explicit = self.case.ask('id4 总榜 100 仅数值')
+        self.assertEqual(overview.status, 'success')
+        self.assertEqual(overview.total.score(100), explicit.total.score(100))
+        self.assertIn('未采集', overview.text)
 
     def test_full_range_pagination_keeps_all_ranks(self):
         pages=render_cutoff(self.ask('总榜 1-100'))
@@ -593,6 +585,21 @@ class TotalRankingOfflineTests(unittest.TestCase):
         self.assertIn('60000000',prepared.pages[0].text)
         self.assertNotIn('60000000',prepared.pages[1].text)
 
+    @patch('ournotes_bot.sources.haneoka.game_assets.asset_bytes', return_value=None)
+    def test_current_qq_renderer_scopes_each_overview_fallback(self, _game_art):
+        from ournotes_bot.commands import resolve_command
+        from ournotes_bot.application.replies import render_prepared
+        from ournotes_bot.sources.moenotes_events import BoardSnapshot
+        boards = tuple(BoardSnapshot(song, (10_000_000,) * 100) for song in self.event.songs)
+        with patch.object(self.case.source, 'event', return_value=self.event), \
+                patch.object(self.case.source, 'boards', return_value=boards), \
+                patch('ournotes_bot.rendering.event_cutoff_visuals.load_artwork', return_value={}):
+            result = resolve_command('/查榜线 单曲', self.case.repo)
+            prepared = render_prepared(result.cutoff.text, result, self.case.repo, 'zh')
+        self.assertGreater(len(prepared.pages), 1)
+        for board in boards:
+            self.assertEqual(sum(board.song.title in page.text for page in prepared.pages), 1)
+
     def test_concurrent_capture_coalesces_and_corrupt_cache_is_replaced(self):
         import sqlite3
         from concurrent.futures import ThreadPoolExecutor
@@ -606,6 +613,67 @@ class TotalRankingOfflineTests(unittest.TestCase):
         restored=TotalRankingRepository(self.history,fetch=self.totals.fetch,clock=lambda:self.now)
         self.assertEqual(restored.capture(self.event,0).score(1),60_000_000)
         self.assertEqual(self.calls,2)
+
+    def test_slow_region_does_not_block_cached_region_and_waiters_share_refresh(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        from ournotes_bot.sources.total_rankings import event_key
+
+        jp = self.event
+        hk = replace(jp, server='tw')
+        self.totals.capture(jp, 0)
+        started, waiting, release = Event(), Event(), Event()
+        lock = self.totals._event_lock
+        fetches = []
+
+        def fetch(event, deadline):
+            fetches.append(event.server)
+            started.set()
+            self.assertTrue(release.wait(5))
+            return replace(self.snapshot(), event_key=event_key(event))
+
+        def wait_for_hk(key):
+            waiting.set()
+            return lock(key)
+
+        self.totals.fetch = fetch
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            first_hk = pool.submit(self.totals.capture, hk, 0)
+            try:
+                self.assertTrue(started.wait(5))
+                warm_jp = pool.submit(self.totals.capture, jp, 0)
+                self.assertEqual(warm_jp.result(timeout=3).score(1), 60_000_000)
+                with patch.object(self.totals, '_event_lock', side_effect=wait_for_hk):
+                    second_hk = pool.submit(self.totals.capture, hk, 0)
+                    self.assertTrue(waiting.wait(5))
+                    self.now += 2
+                    release.set()
+                    self.assertEqual(first_hk.result(timeout=5), second_hk.result(timeout=5))
+            finally:
+                release.set()
+        self.assertEqual(fetches, ['tw'])
+
+    def test_bad_clock_preserves_trusted_current_across_restart_and_is_quarantined(self):
+        import sqlite3
+        from ournotes_bot.sources.total_rankings import TotalRankingRepository
+
+        original = self.totals.capture(self.event, 0)
+        self.now += 61
+        self.totals.fetch = lambda event, deadline: replace(
+            self.snapshot(), scores=(99,) * 100,
+            fetched_ms=int(self.now * 1000) + 119_000, server_ms=int(self.now * 1000) + 120_000)
+        fallback = self.totals.capture(self.event, 0)
+        self.assertEqual((fallback.score(1), fallback.fetched_ms), (original.score(1), original.fetched_ms))
+        self.assertIn('最后可用观测', fallback.status)
+        self.assertEqual(self.history.cached(self.event).fetched_ms, original.fetched_ms)
+        self.assertEqual(self.totals.sample(self.event, 0), 'clock_unknown')
+        with sqlite3.connect(self.history.path) as db:
+            self.assertEqual(db.execute('SELECT quality FROM samples').fetchall(), [('clock_unknown',)])
+        restored = TotalRankingRepository(self.history, fetch=self.totals.fetch, clock=lambda: self.now)
+        self.assertEqual(restored.capture(self.event, 0).score(1), original.score(1))
+        self.now += 61
+        self.totals.fetch = lambda event, deadline: self.snapshot()
+        self.assertGreater(self.totals.capture(self.event, 0).fetched_ms, original.fetched_ms)
 
     def test_foreign_legacy_database_and_low_disk_are_not_modified(self):
         import sqlite3

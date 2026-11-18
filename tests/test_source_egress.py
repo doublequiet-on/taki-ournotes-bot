@@ -225,7 +225,18 @@ class SourceEgressTests(unittest.TestCase):
         fixture = cutoff_fixture.Fixture()
         from test_haneoka_event_metadata import StaticFixture
         metadata = StaticFixture()
-        self.handler = lambda url: fixture(url, 4) if '/game/records/' in url else metadata(url, 512000, 4)
+        def public_fixture(url):
+            if '/game/records/' not in url:
+                return metadata(url, 512000, 4)
+            raw, headers = fixture(url, 4)
+            dto = json.loads(raw)
+            if url.endswith('/current'):
+                dto['event']['totalRankingEnabled'] = True
+            if url.endswith('/total/latest'):
+                dto.pop('challengeId')
+                dto.update(provider='official', observedAtMs=dto['fetchedAtMs'])
+            return json.dumps(dto).encode(), headers
+        self.handler = public_fixture
         repo = self.repository()
         settings = SimpleNamespace(cutoff_source='haneoka', cache_file=repo.cache_file,
                                    cutoff_history_file=None, moenotes_open_history_file=None,
@@ -234,12 +245,17 @@ class SourceEgressTests(unittest.TestCase):
         configure_sources(repo, settings)
         source = repo.event_cutoffs
         source.clock = source.monotonic = lambda: fixture.now
+        source.total_rankings.clock = source.clock
         source.metadata.clock = source.metadata.monotonic = lambda: fixture.now
         sampler = HistorySampler(source)
         sampler.sample_once()
         self.assertEqual(source.history.status()['points'], 4)
         self.assertEqual({urlsplit(c['url']).path.split('/')[5] for c in self.calls if '/game/records/' in c['url']}, {'jp', 'tw', 'kr', 'en'})
-        self.assertEqual(len(self.calls), 14)
+        self.assertEqual(len(self.calls), 18)
+        for region in ('jp', 'tw', 'kr', 'en'):
+            events = source.total_rankings.history.events(region)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(source.total_rankings.history.latest(events[0]).score(1), 100)
         fixture.now += 61
         self.transport_failed = True
         sampler.sample_once()

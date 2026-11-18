@@ -33,8 +33,6 @@ def quality_notes(answer, board):
         if value is not None:notes.append(title+'：'+stamp(value))
     if board.error_code:notes.append('来源错误：'+board.error_code)
     if board.snapshot_id:notes.append('快照：'+board.snapshot_id)
-    if board.provider and not answer.historical:
-        notes.append('provider_schema_pending：此来源的新观测尚未接通历史；不代表完整历史。')
     return tuple(notes)
 
 
@@ -147,7 +145,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
     if any(b.score(r) is not None and b.score(r)>answer.score_display_limit for b in boards for r in answer.ranks):
         footer.append('* 表示当前异常分数，完整原值和来源排名保留。')
     footer=list(dict.fromkeys(footer))
-    footer += [answer.source_label+' · 非官方 · 挑战歌曲 Top 100 · 非预测、非确认终榜']
+    footer += [answer.source_label+' · 挑战歌曲 Top 100 · 非确认终榜']
     footlines=tuple(l for v in footer for l in lines(v,width-108,24));footheight=len(footlines)*32+38
     def score_text(board,rank):
         value=board.score(rank)
@@ -226,8 +224,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             rh=72 if historical and not any(answer.has_players(b) for b in boards) else max(max(row_height(b,rank) for b in boards),112)
             rh+=max(len(lines(position_detail(b,rank),int(cw)-40,22)) for b in boards)*32
             blocks.append(('table',rh,rank))
-        plot_height=404 if any(answer.history_for(b).points for b in boards) else 180
-        head+=columns+plot_height+88
+        head += columns + 88
     def paint(start,stop,height):
         c=Canvas(width,height);header(c);y=head
         if not trend:
@@ -242,12 +239,6 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                     c.text(x+8,event_head+title_heights[b.song.music_id]+66,'最近一次有效观测',24,ACCENT)
                     c.text(x+8,event_head+title_heights[b.song.music_id]+98,
                            display_time(b.fetched_ms,event.server),24,MUTED)
-                chart(c,answer,b,(x,event_head+columns,int(cw)-34,plot_height),display_time,heading=width!=1080)
-            ranks=chart_ranks(answer)
-            span=min(174,(width-200)/len(ranks));left=(width-span*len(ranks))/2
-            for i,rank in enumerate(ranks):
-                x=left+i*span;ly=event_head+columns+22 if width==1080 else head-42;c.draw.line((x,ly,x+28,ly),fill=COLORS[i%5],width=4)
-                c.text(x+38,ly,f'T{rank}',26,MUTED)
             c.text(100,head-18,'位置',26,MUTED,align='center')
             for i in range(len(boards)):
                 if answer.has_players(boards[i]):c.text(156+i*cw,head-18,'玩家',26,MUTED)
@@ -362,9 +353,20 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
         sizes=tuple(sum(b[1] for b in blocks[a:z]) for a,z in zip(groups,groups[1:]))
         if sizes and max(sizes)+head+footheight<=min(MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width):
             parts=render_parts(sizes,width,head+footheight,lambda a,z,h:paint(groups[a],groups[z],h))
-        else:
-            parts=render_parts(tuple(b[1] for b in blocks),width,head+footheight,paint)
-        return total_pages+tuple(CutoffPage(p.image,captured_text(answer) if trend else captured_text(replace(answer,display_ranks=tuple(b[2] for b in blocks[p.start:p.stop])))) for p in parts)
+            return total_pages + tuple(CutoffPage(part.image, captured_text(replace(
+                answer, boards=boards[part.start:part.stop]))) for part in parts)
+        parts=render_parts(tuple(b[1] for b in blocks),width,head+footheight,paint)
+        pages = []
+        for part in parts:
+            selected = blocks[part.start:part.stop]
+            if trend:
+                challenge_ids = {((data[0] if kind == 'rank' else data).song.challenge_id)
+                                 for kind, _, data in selected}
+                page_answer = replace(answer, boards=tuple(b for b in boards if b.song.challenge_id in challenge_ids))
+            else:
+                page_answer = replace(answer, display_ranks=tuple(b[2] for b in selected))
+            pages.append(CutoffPage(part.image, captured_text(page_answer)))
+        return total_pages + tuple(pages)
     finally:
         for image in cache.values():
             if image is not None:image.close()

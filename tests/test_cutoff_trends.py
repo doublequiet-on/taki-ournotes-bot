@@ -34,9 +34,9 @@ class TrendTests(unittest.TestCase):
 
     def test_matrix_and_canonical_public_server(self):
         for query, count, ranks in (("", 3, (1, 2, 3, 10, 100)), ("100", 3, tuple(range(90,101))),
-                                    ("t37", 3, tuple(range(27,48))), ("夢我夢中", 1, (1, 2, 3, 10, 100)),
-                                    ("夢我夢中 t37,T10，T1 T37", 1, (1, 10, 37)),
-                                    ("hk 夢我夢中 T100 T50 T3 T2 T1", 1, (1, 2, 3, 50, 100))):
+                                    ("t37", 3, tuple(range(27,48))),
+                                    ("t37,T10，T1 T37", 3, (1, 10, 37)),
+                                    ("hk T100 T50 T3 T2 T1", 3, (1, 2, 3, 50, 100))):
             with self.subTest(query=query):
                 answer = self.query(query)
                 self.assertEqual(answer.status, "success", answer.text)
@@ -54,13 +54,7 @@ class TrendTests(unittest.TestCase):
         self.assertEqual(execute_cutoff(CutoffRequest(rank=True), self.repo).status, "invalid_arguments")
         self.assertEqual(execute_cutoff(CutoffRequest(ranks=(37, 1, 37)), self.repo).ranks, (1, 37))
 
-    def test_entity_precedence_with_numeric_name(self):
-        answer = self.query('歌名="123" T1 T37')
-        self.assertEqual(len(answer.boards), 1)
-        self.assertEqual(answer.boards[0].song.title, "123")
-        self.assertEqual(self.query("长歌名 37 T100").boards[0].song.title, "长歌名 37")
-        self.assertEqual(self.query('歌名="123"').ranks, (1, 2, 3, 10, 100))
-        self.assertEqual(self.query('123').status, 'invalid_arguments')
+
 
     def test_numeric_only_skips_history_read_and_all_drawing(self):
         with patch.object(self.source.history, "read", side_effect=AssertionError("history read")):
@@ -107,7 +101,7 @@ class TrendTests(unittest.TestCase):
         from ournotes_bot.rendering import cutoff_trends
         from ournotes_bot.query.event_cutoff_query import song_period_lines
         from ournotes_bot.sources.moenotes_events import display_time
-        answer = self.query("夢我夢中")
+        answer = self.query()
         board = answer.boards[0]
         song = replace(board.song, effective_start_ms=answer.event.start_ms + 3600000,
                        effective_end_ms=answer.event.end_ms - 3600000)
@@ -123,7 +117,7 @@ class TrendTests(unittest.TestCase):
 
     def test_overlapping_history_names_every_coincident_rank(self):
         from ournotes_bot.rendering import cutoff_trends
-        answer = self.query("夢我夢中")
+        answer = self.query()
         board = answer.boards[0]
         points = tuple(HistoryPoint(board.fetched_ms + i * 300000, (100 + i,) * 5,
                                     board.received_ms + i * 300000) for i in range(288))
@@ -131,7 +125,7 @@ class TrendTests(unittest.TestCase):
         with patch.object(cutoff_trends, "_text", wraps=cutoff_trends._text) as draw:
             render_cutoff(answer)
         rendered = "\n".join(line for call in draw.call_args_list for line in call.args[1])
-        self.assertIn("同值历史重叠：T1 / T2 / T3 / T10 / T100", rendered)
+        self.assertIn("同值历史重叠：T1 / T2 / T3 / T10 / T100", rendered.replace("\n", ""))
 
 
 if __name__ == "__main__":

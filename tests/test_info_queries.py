@@ -305,10 +305,10 @@ class InformationQueryTests(unittest.TestCase):
         with patch('ournotes_bot.application.replies.visual_asset', return_value=None):
             prepared = render_prepared_inner(result.activity.text, result, repo, 'zh')
         self.assertTrue(prepared.image)
-        self.assertEqual(prepared.image_caption, '/查榜线 jp 锁定活动1 歌曲ID=101')
+        self.assertEqual(prepared.image_caption, '/查榜线 jp 锁定活动1')
         batch = expand_replies([replace(prepared, image=None, pages=(prepared,) * 7)])
         self.assertEqual(len(batch), 5)
-        self.assertIn('/查榜线 jp 锁定活动1 歌曲ID=101', batch[-1].image_caption)
+        self.assertIn('/查榜线 jp 锁定活动1', batch[-1].image_caption)
         self.assertIn('图片 5/7；/继续', batch[-1].image_caption)
         self.assertEqual(len(batch[-1].context.remaining), 2)
 
@@ -678,12 +678,63 @@ class InformationQueryTests(unittest.TestCase):
         repo = SimpleNamespace(event_cutoffs=source, capture_catalog=lambda: catalog(activities=(static,), cards=(card(7),)))
         return repo, source
 
+    def test_current_activity_picture_includes_total_only_for_supported_event(self):
+        from dataclasses import replace
+        from unittest.mock import Mock
+        from ournotes_bot.domain.total_rankings import TotalRankingSnapshot
+        from ournotes_bot.rendering.info_layout import render_info
+        repo, source = self._current_repository(activity(1, '活动'))
+        source.total_rankings = Mock(connected=True)
+        source.total_rankings.capture.return_value = TotalRankingSnapshot(
+            'key', 'haneoka', (9007199254740993, 0, 30), NOW * 1000, NOW * 1000)
+        self.assertNotIn('挑战综合分数榜', execute_activity('当前', repo).text)
+        source.total_rankings.capture.assert_not_called()
+        source.value = replace(source.value, total_ranking_enabled=True)
+        answer = execute_activity('当前', repo)
+        source.total_rankings.capture.assert_called_once_with(source.value, 0)
+        self.assertIn('T1  9,007,199,254,740,993', answer.text)
+        self.assertIn('/查榜线 jp 锁定活动1 总榜', answer.text)
+        self.assertIn('T2  0', answer.text)
+        self.assertIn('T100  暂无数据', answer.text)
+        pages = render_info(answer)
+        self.assertTrue(any(p.image and '挑战综合分数榜' in p.text for p in pages))
+        self.assertNotIn('挑战综合分数榜', execute_activity('加成', repo).text)
+        source.total_rankings.capture.assert_called_once()
+
+    def test_ended_activity_uses_confirmed_archived_total_and_omits_older_events(self):
+        from unittest.mock import Mock
+        from ournotes_bot.domain.total_rankings import TotalRankingSnapshot
+        total = activity(4, '已结束有总榜', start=NOW - 2000, end=NOW - 100, ranking_modes=('挑战歌曲总榜',))
+        old = activity(1, '旧榜制', start=NOW - 4000, end=NOW - 3000)
+        source = CurrentSource(None)
+        source.total_rankings = Mock(connected=True)
+        source.total_rankings.history.source = 'haneoka'
+        source.total_rankings.history.events.return_value = ()
+        source.total_rankings.archived.return_value = TotalRankingSnapshot(
+            'key', 'haneoka', (1234,), (NOW - 10) * 1000, NOW * 1000, stale=True)
+        repo = SimpleNamespace(event_cutoffs=source, capture_catalog=lambda: catalog(activities=(old, total)))
+        self.assertNotIn('挑战综合分数榜', execute_activity('1', repo, now=NOW).text)
+        source.total_rankings.archived.assert_not_called()
+        result = execute_activity('4', repo, now=NOW)
+        self.assertIn('T1  1,234', result.text)
+        self.assertIn('最后可读观测', result.text)
+        self.assertNotIn('/查榜线', result.text)
+        event, deadline = source.total_rankings.archived.call_args.args
+        self.assertEqual((event.event_id, event.end_ms, deadline), ('4', (NOW - 100) * 1000, 0))
+        self.assertEqual(source.calls, [])
+        source.total_rankings.history.events.return_value = (event,)
+        source.total_rankings.history.latest.return_value = source.total_rankings.archived.return_value
+        self.assertIn('/查榜线 jp id4 总榜', execute_activity('4', repo, now=NOW).text)
+        source.total_rankings.archived.assert_called_once()
+
     def test_current_activity_same_id_and_dates_can_attach_static_cards(self):
         record = activity(1, '静态标题', bonus_cards=(CardRef(2, 7),), available_relations=frozenset({'bonus_cards'}))
         repo, source = self._current_repository(record)
         result = execute_activity('当前', repo)
         self.assertEqual(source.calls, ['jp'])
-        self.assertIn('/查榜线 jp 锁定活动1 歌曲ID=101', result.text)
+        self.assertIn('/查榜线 jp 锁定活动1', result.text)
+        self.assertIn('歌曲 ID 101', result.text)
+        self.assertNotIn('歌曲ID=', result.text)
         self.assertIn('/查卡 7', result.text)
         self.assert_same_text(result)
 
@@ -692,7 +743,9 @@ class InformationQueryTests(unittest.TestCase):
         repo, _ = self._current_repository(record)
         result = execute_activity('当前', repo)
         self.assertEqual(result.text.count('歌曲 ID 101'), 1)
-        self.assertIn('/查榜线 jp 锁定活动1 歌曲ID=101', result.text)
+        self.assertIn('/查榜线 jp 锁定活动1', result.text)
+        self.assertIn('歌曲 ID 101', result.text)
+        self.assertNotIn('歌曲ID=', result.text)
         self.assertNotIn('/查曲 101', result.text)
         self.assertIn('/查曲 102', result.text)
         self.assert_same_text(result)
@@ -789,6 +842,12 @@ class ActivityAnnouncementTests(unittest.TestCase):
         self.assertIn('/announcements/10/',result.text);self.assertNotIn('清 CP',result.text)
         self.assertNotIn('还不能确定',result.text)
         repo.activity_announcements.next.assert_called_once_with('jp',NOW)
+        announced, _ = repo.activity_announcements.next.return_value
+        repo.activity_announcements.next.return_value = (announced, '公告列表未完全核对。')
+        partial = execute_activity('下期', repo, now=NOW)
+        self.assertIn('下一期公告', partial.text)
+        self.assertEqual(partial.calendar_time_status, 'related')
+        self.assertIsNone(partial.calendar_time)
 
 
 class PublicQueryContractTests(unittest.TestCase):

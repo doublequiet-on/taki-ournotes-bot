@@ -17,7 +17,7 @@
 | 活动 | `/查活动`、`event`、`イベント` | 当前/历史/列表/详情固定口语和明确命令转交 | 未注册 | `query/activity_query.py`、`test_info_queries.py` |
 | 卡池 | `/查卡池` 默认日服目录，可选当前／最近／历史或按分类、ID、ID 区间、名称查询 | 当前／最近／历史／列表／详情固定口语和中文命令转交 | 原生 `catalog_info(kind=gacha)`，校验原句后转交 | `query/gacha_query.py`、`test_info_command_pipeline.py` |
 | 人物 | `/查角色` | 人物资料/生日/乐队成员固定口语和明确命令转交 | 未注册 | `query/character_query.py`、`test_info_queries.py` |
-| 歌曲榜线 | `/查榜线`、`/榜线` | `parse_natural_cutoff`，含服别/活动/歌曲/排名 | 保持本地，不调用模型 | `query/event_cutoff_query.py`、`test_cutoff_query_v2.py`、`test_cutoff_archive.py` |
+| 歌曲榜线 | `/查榜线`、`/榜线` | `parse_natural_cutoff`，含服别/活动/榜单类型/排名 | 保持本地，不调用模型 | `query/event_cutoff_query.py`、`test_cutoff_query_v2.py`、`test_cutoff_archive.py` |
 | 短答/数量 | 相应命令显示资料；短答入口是 `/问` | `parse_field_question` | 无 `field` 模型参数 | `query/field_query.py`、`test_field_queries.py` |
 | 别名 | `/查缩写` | 实体解析使用同一词库；不等于反查别名功能 | 只允许已核实对象 | `query/entity_lexicon.py`、`test_ai_lexicon.py` |
 | 续查 | `/继续`、选择和详情语法 | 平台持有已发送上下文；脱离上下文时代理拒绝 | 不开放自由修改条件 | `query/continuation.py`、`test_continuation.py` |
@@ -78,7 +78,7 @@
 | 卡池模式/名称/ID | JP；默认、当前、列表均选 `start_at <= now < end_at`；历史选 `end_at <= now`；ID/名称不要求当前开放 | 是 / 是 / 当前结束时间升序，历史结束时间降序，ID随同方向 |
 | 人物名称/昵称/ID/乐队 | JP；空为目录，`乐队=…` 限乐队；原名/多语言名/艺名/昵称与已核实别名；ID只按人物实体解析 | 是 / 是 / 目录固定 band_id、order、id |
 
-活动/卡池名称优先 ID或精确多语言名，再子串候选；不支持日期范围、费用、概率、保底筛选。日服活动列表和历史支持简写 `MyGO 红,蓝 挑战演出`、字段短写 `角色 高松灯` 和既有的 `字段=值`。同字段多选取并集，跨字段取交集。可叠加一个活动 ID 约束，例如 `ID 2到5`（包含两端）或 `ID>=2`。裸单个数字仍查详情。类型名称目前仅映射 [Haneoka 明确标注的挑战演出活动（类型 1）](https://github.com/haneoka-gakuen/haneoka/blob/1b918cc4959b1e0f8104277e3ab2e804f854b46a/src/lit/team-builder/planner-view.ts#L850-L861)。资料不足且仍可能匹配的活动单独计数。加成、奖励、任务及关联卡池合并在详情图。活动奖励、加成、展示卡和卡池 UP 按来源关系分类型、ID 去重；不完整关系标明已确认部分。当前活动只取活动元数据，不因查活动下载玩家榜。静态补充资料与当前活动关联需 ID 和时间窗口同时匹配，日服映射 JP，其他服映射 intl。
+活动/卡池名称优先 ID或精确多语言名，再子串候选；不支持日期范围、费用、概率、保底筛选。日服活动列表和历史支持简写 `MyGO 红,蓝 挑战演出`、字段短写 `角色 高松灯` 和既有的 `字段=值`。同字段多选取并集，跨字段取交集。可叠加一个活动 ID 约束，例如 `ID 2到5`（包含两端）或 `ID>=2`。裸单个数字仍查详情。类型名称目前仅映射 [Haneoka 明确标注的挑战演出活动（类型 1）](https://github.com/haneoka-gakuen/haneoka/blob/1b918cc4959b1e0f8104277e3ab2e804f854b46a/src/lit/team-builder/planner-view.ts#L850-L861)。资料不足且仍可能匹配的活动单独计数。加成、奖励、任务及关联卡池合并在详情图。活动奖励、加成、展示卡和卡池 UP 按来源关系分类型、ID 去重；不完整关系标明已确认部分。当前活动读取活动元数据，确认有独立综合榜时展示该榜五档快照。静态补充资料与当前活动关联需 ID 和时间窗口同时匹配，日服映射 JP，其他服映射 intl。
 
 卡池处于资料时间窗不等于所有账号可抽；缺开始/结束不能补 0。人物目录独立于卡牌，角色无卡仍存在；多人 SNAP 每张计一次，关系不完整显示“至少”，不是确定总量。身高、生日、学校等档案字段可展示，不开放任意筛选或排序。
 
@@ -90,11 +90,11 @@
 |---|---|---|
 | `server` | 默认 jp；jp/hk/kr/en，hk→tw；未知服别拒绝 | 是 / 是 / 否 |
 | `event_id/event_name` | 默认当前/最近；`id1`、`活动ID=1`、`活动="名称"` 只查历史；`锁定活动1` 优先读同一期实时榜，其他情况查该期已有观测；裸数字仍是排名 | 是 / 是 / 否 |
-| `query/song_id/song_number` | 默认全部挑战歌曲；歌名、`歌曲ID=100001`、`歌曲1`；按所选活动/服别核实 | 是 / 是 / 来源歌曲编号顺序 |
+| `board_scope` | 默认全部课题曲及可用的综合榜，`单曲`取全部课题曲，`总榜`只取综合榜 | 是 / 是 / 否 |
 | `mode/target_rank/range_bounds/ranks` | 不填为五档 1/2/3/10/100 趋势；`50` 为 40～60 附近排名；`20-40` 包含两端；`50-50` 单排名；离散用 `T1 T10 T37`，最多 5 个不同排名 | 是 / 是 / 固定排名升序 |
 | `numeric_only` | 默认 false；`仅数值`改投影，不改变选择 | 是 / 否 / 否 |
 
-排名只接受 1～100 整数；附近范围截断至边界；反向区间拒绝。`/查榜线 hk id1 歌曲ID=100001 20-40` 中三类数字不得混淆。玩家分数、数字 ID 和用户名来自同一行；缺玩家 ID/缺名次不能虚构。自然语言走 `parse_natural_cutoff`，不消耗模型额度。现有趋势、玩家记录及缺资料语义见 [榜线专题](EVENT_CUTOFFS.md)、[历史说明](CUTOFF_HISTORY.md) 和 `test_cutoff_player_ids.py`。
+排名只接受 1～100 整数；附近范围截断至边界；反向区间拒绝。`/查榜线 hk id1 总榜 20-40` 中活动 ID 和排名保持独立。玩家分数、数字 ID 和用户名来自同一行；缺玩家 ID/缺名次不能虚构。自然语言走 `parse_natural_cutoff`，不消耗模型额度。现有趋势、玩家记录及缺资料语义见 [榜线专题](EVENT_CUTOFFS.md)、[历史说明](CUTOFF_HISTORY.md) 和 `test_cutoff_player_ids.py`。
 
 ## 字段、数量、别名与续查
 

@@ -87,7 +87,7 @@ class OpenContractTests(unittest.TestCase):
         self.assertTrue(all("/event/challenge-ranking?challengeMusicId=" in u for u in self.formal.calls))
         self.assertTrue(all("eventId=" not in u and "musicId=" not in u and "ranks=" not in u for u in self.formal.calls))
         self.assertFalse(any(u.endswith("/ranking") for u in self.public.calls))
-        hk = execute_cutoff(parse_cutoff("hk 20-40 歌曲1 仅数值"), self.repo)
+        hk = execute_cutoff(parse_cutoff("hk 20-40 仅数值"), self.repo)
         self.assertEqual(hk.event.server, "tw")
         self.assertEqual(hk.ranks, tuple(range(20, 41)))
 
@@ -176,7 +176,7 @@ class OpenContractTests(unittest.TestCase):
         self.source._event_identities.clear()
         self.advance()
         self.client.transport = original
-        result = execute_cutoff(parse_cutoff("jp 歌曲1 100"), self.repo)
+        result = execute_cutoff(parse_cutoff("jp 100"), self.repo)
         self.assertEqual(result.ranks, tuple(range(90, 101)))
         self.assertEqual(result.boards[0].score(100), 901)
 

@@ -198,7 +198,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
     def _get(self, url, deadline):
         parts = urlsplit(url)
         if (parts.scheme != "https" or parts.netloc != "haneoka.org" or parts.query or parts.fragment
-                or not re.fullmatch(r"/api/v1/game/records/(jp|tw|kr|en)/events/(?:current|[1-9][0-9]{0,18}/challenges/[1-9][0-9]{0,18}/ranking)", parts.path)):
+                or not re.fullmatch(r"/api/v1/game/records/(jp|tw|kr|en)/events/(?:current|[1-9][0-9]{0,18}/(?:challenges/[1-9][0-9]{0,18}/ranking|total/latest))", parts.path)):
             raise SourceError("invalid_url")
         raw, headers = super()._get(url, deadline)
         if len(raw) > MAX_BYTES:
@@ -349,7 +349,8 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
                 raise SourceError("identity_changed")
         except SourceError as exc:
             if self.history and event.provider is None:
-                self.history.failure(event.server, event.event_id, song.challenge_id, exc.code)
+                with self._board_history_writer():
+                    self.history.failure(event.server, event.event_id, song.challenge_id, exc.code)
             labels = {'pending': '榜单尚未就绪，请稍后重试', 'rate_limited': '来源限流，请稍后重试',
                       'not_found': '来源已确认榜单不存在'}
             return replace(empty, status=labels.get(exc.code, "Haneoka 榜线暂不可用，请稍后重试"), error_code=exc.code)
@@ -359,10 +360,13 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             board = replace(board, notes=board.notes + ('当前观测未写入旧历史库：等待来源隔离合同迁移。',))
         elif self.history:
             if entry.late:
-                self.history.record(event, self._snapshot(event, song, entry.late))
+                with self._board_history_writer():
+                    self.history.record(event, self._snapshot(event, song, entry.late))
             if entry.fallback and board.provider is None:
-                self.history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
-            stored = self.history.record(event, board)
+                with self._board_history_writer():
+                    self.history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
+            with self._board_history_writer():
+                stored = self.history.record(event, board)
             self._note_retrieval('history_result',stored)
             if stored == "conflict":
                 board = replace(board, scores=(), quality="conflict", status="同一源时刻分数冲突，暂无可信当前值")
