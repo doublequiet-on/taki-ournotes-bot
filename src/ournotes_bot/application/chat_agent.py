@@ -90,7 +90,7 @@ SOURCE_SEMANTICS = '''
 
 RESEARCH_SEMANTICS = '''
 面对比较、多项查询和连续修改，使用 research_task 维护本次目标、对象顺序和所需字段。宿主提供的 current_entities 和上轮任务引用已确认对象身份，可直接 read_entity_fields，不必重复 site_search/site_read；没有身份时才用站内搜索确认。research_task 和 read_entity_fields 可在同次回复连续调用，最多两个对象可一次读完。第二张、换成另一张等以 targets 顺序和当前消息为准，变更时更新任务。谱面条件用 requirements.difficulty 保存；后续只改对象时继承未改的难度，不重复追问。歌曲等级和Note比较用 level/notes 字段；song_metrics 用于全曲筛选排序，不能代替多对象字段比较。闲聊不创建任务。
-用户让你查清一个对象的多项规则时，先用 knowledge_search 按对象查已审核资料；术语陌生也可以先试查。结合上下文识别群内约定或现实活动，需要回忆群里提过的人、事或约定时用群记忆。资料范围仍有歧义时再问清。
+用户要查 ON 规则时，用 knowledge_search 按对象查审核资料；对象陌生但可能属于 ON 时可先试查。现实活动以对应机构的通知为准。对象仍有歧义、来源不匹配或只找到测试资料，就问活动名或请对方给原文。只有当前问题或可见上下文指向先前的群内发言、经历或约定，才调用群记忆工具；外部资料没查到本身不是回忆线索。
 多项规则共用一个 research_task，每个要查的条件各占一项。读到正文后用 set 一次提交全部要求：已获支持的项把返回的 chunk_id 填入 evidence，无支持的项保留空 evidence。知识项的 knowledge 填 true；没有实体引用时 entity_refs 填 []、绑定的 entity_ref 填空串，有已确认对象时沿用其引用。没有结构化字段或谱面难度时 fields 填 []、difficulty 填空串。单项规则可直接答。按 coverage 的缺项有针对性地补查，仍缺资料就回答已知部分并指出缺项。用户说不用了、先这样时，用 research_task cancel 结束当前任务。明确换题时使用当前对象。
 '''
 
@@ -1415,7 +1415,7 @@ class ChatAgent:
         if vision is not None:
             registry['image_read']=Tool('image_read','按本轮上下文中原消息ID重读仍有效的本群图片，用于比较或追问；保持原作者。缓存过期时返回不可用，不能读取任意URL。',
                 obj({'message_id':string(256)},('message_id',)),'image')
-        registry['group_memory_search']=Tool('group_memory_search','检索本群最近30天Taki参与过的对话；区分发言者、实际送达回复和外部事实。可改写query。',
+        registry['group_memory_search']=Tool('group_memory_search','按当前对话给出的回忆线索，找回本群最近30天Taki参与过的发言或约定。可改写query。外部规则或活动来源不明时直接澄清，不用此工具猜来源。',
             obj({'query':string(120)},('query',)),'memory')
         registry['group_memory_read']=Tool('group_memory_read','读取本群指定消息ID及其发言者；仅支持已保存的参与片段。',
             obj({'message_ids':{'type':'array','items':string(256),'minItems':1,'maxItems':8}},('message_ids',)),'memory')
