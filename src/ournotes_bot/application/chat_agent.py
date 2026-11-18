@@ -10,7 +10,7 @@ import ipaddress
 import time
 import uuid
 import unicodedata
-from dataclasses import replace, asdict
+from dataclasses import dataclass, replace, asdict
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from urllib.parse import urlsplit, unquote, parse_qsl
@@ -25,6 +25,7 @@ from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call
 from ..natural_query.query_validation import EntityEvidence
 from ..query.continuation import catalog_version
 from ..query.entity_lexicon import band_aliases, alias_scope, alias_status, alias_version
+from ..query.story_retrieval import chapter_numbers, chapter_subject_query
 from ..sources.errors import ChartDataError
 from ..data import DataError
 from .runtime_tasks import finish_thread
@@ -263,6 +264,46 @@ def matching_mechanic_passage(leases, mechanic, question):
                                            unicodedata.normalize('NFKC', body), mechanic, question):
                     return passage.strip()
     return ''
+
+
+@dataclass(frozen=True)
+class ChapterLookup:
+    subject: str
+    sources: frozenset[str]
+    numbers: frozenset[int]
+    cast: frozenset[str]
+
+    @classmethod
+    def for_request(cls, question, rewritten, scenes):
+        if '章' not in question:
+            return None
+        numbers = frozenset(chapter_numbers(question))
+        already_read = {n for scene in scenes for n in chapter_numbers(scene['chapter'])}
+        multi = re.search(r'(?:前[后後]|不同|另[一外]|跨|[两兩多各每]|[上下]一)\s*(?:[两兩二]?[个個]?)\s*章', question)
+        if None in numbers or not (numbers - already_read or multi):
+            return None
+        subject, cast = chapter_subject_query(rewritten, (name for scene in scenes for name in scene['participants']))
+        if not subject or len(subject)>300:
+            return None
+        return cls(subject, frozenset(scene['source_id'] for scene in scenes), numbers, cast)
+
+    def search(self, story, args):
+        filters = args.get('filters', {})
+        source = filters.get('source_id')
+        if source is None and len(self.sources)==1:
+            source, = self.sources
+        chapter = (filters.get('chapter') or args['query']).strip()
+        target = chapter_numbers(chapter)
+        if (source not in self.sources or not 0<len(chapter)<=100
+                or self.numbers and not (target and target<=self.numbers)):
+            return {'status':'story_scope_mismatch','items':[]}
+        result = story.search(self.subject, {'source_id':source,'chapter':chapter}, limit=3, facts_only=True)
+        # Only a later version-bound read can supply evidence from this chapter.
+        items = [{key:row[key] for key in ('handle','source_id','source_kind','title','locator')}
+                 for row in result['items'] if self.cast.issubset(row['participants'])]
+        status = 'no_results' if result['status']=='ok' and not items else result['status']
+        return {'status':status, 'items':items, **{key:result[key] for key in ('source_revision','revocation_revision')
+                                                   if key in result}}
 
 
 def research_tools():
@@ -1384,6 +1425,7 @@ class ChatAgent:
             trace_evidence('story_registry','registered')
         story_handles={}
         fact_windows=set()
+        chapter_lookup=None
         story_tools_prepared=set()
         def evidence_reply(text,status='success'):
             text=self.proactive.decision(work,json.dumps(dict(participation='reply',text=text),ensure_ascii=False))
@@ -1495,6 +1537,7 @@ class ChatAgent:
                         if result['status']=='ok':
                             if explicit_text:
                                 operations = result.pop('_operations')
+                                chapter_lookup = result.pop('_chapter_lookup', None)
                             evidence = {'story_evidence':result}
                 else:
                     trace_evidence('story_registry', 'story_not_configured')
@@ -1557,15 +1600,24 @@ class ChatAgent:
                     messages.append(entry)
                     force_final = True
                     evidence_in_context = True
-                    if story_fact and explicit_text and (unread or context_handles):
+                    if story_fact and explicit_text and (unread or context_handles or chapter_lookup):
                         registry = {'story_read':registry['story_read']}
                         details = dict(result, unread_candidates=unread, context_handles=context_handles)
                         optional_entry = {'role':'user','content':json.dumps({'story_evidence':details},ensure_ascii=False)}
                         guide = {'role':'system','content':'证据已经足够就直接回答。有具体缺项才读 unread_candidates 的对应章节，'
                                  '或用 context_handles 补读紧邻上下文。候选标题不能作为已读正文引用。'}
-                        if (operations < self.budget.tool_calls and self.budget.model_calls > 1
-                                and runtime.input_bound(work,[*messages[:-1],optional_entry,guide],[registry['story_read'].wire()])
-                                <= work.model_snapshot.profile.max_input_tokens-2048):
+                        projected = [*messages[:-1],optional_entry,guide]
+                        limit = work.model_snapshot.profile.max_input_tokens-2048
+                        if (chapter_lookup and operations+2<=self.budget.tool_calls
+                                and self.budget.model_calls-work.model_attempts>=3):
+                            chapter_tool = Tool('story_search','缺章时查已读来源。query 填目标章节原名，多个来源时用 filters.source_id 选择。'
+                                '用 story_read 的零前后窗读命中的场景，查不到就说明缺哪章。',
+                                obj({'query':string(100),'filters':obj({'chapter':string(100),'source_id':string(100)})},('query',)),'story')
+                            if runtime.input_bound(work,projected,[registry['story_read'].wire(),chapter_tool.wire()])<=limit:
+                                registry['story_search'] = chapter_tool
+                        if (operations < self.budget.tool_calls and self.budget.model_calls > 1 and
+                                (unread or context_handles or 'story_search' in registry)
+                                and runtime.input_bound(work,projected,[t.wire() for t in registry.values()])<=limit):
                             messages[-1:] = [optional_entry,guide]
                             story_handles.update((handle,None) for handle in result['evidence_read'])
                             story_handles.update((row['handle'],None) for row in unread)
@@ -1625,6 +1677,9 @@ class ChatAgent:
                     messages.append({'role':'system','content':closing})
                 reservation=final_attempt if final else None
                 active_registry = {required:registry[required]} if required else registry
+                if (chapter_lookup and 'story_search' in active_registry and
+                        (operations+2>self.budget.tool_calls or self.budget.model_calls-work.model_attempts<3)):
+                    active_registry = {name:tool for name,tool in active_registry.items() if name!='story_search'}
                 if proactive_evidence and not required:
                     active_registry = {}
                 if not final:
@@ -1763,6 +1818,7 @@ class ChatAgent:
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
                                                          registry=active_registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision,
                                                          fact_windows=fact_windows if story_fact and explicit_text else None,
+                                                         chapter_lookup=chapter_lookup,
                                                          knowledge_cache=knowledge_cache if explicit_text and work.chat_task.goal and not mechanic else None,
                                                          meta_question=meta_question,evidence_route=route,just_card=just_card,
                                                          mechanic_server=mechanic_server if mechanic else None,
@@ -1904,6 +1960,8 @@ class ChatAgent:
         except (StoryError, OSError):
             evidence = {'status':'source_unavailable'}
         if evidence['status'] in ('ok','budget_exhausted'):
+            if tool_limit is not None and evidence['status']=='ok':
+                evidence['_chapter_lookup'] = ChapterLookup.for_request(question,matches['rewritten_query'],evidence['scenes'])
             return matches['status'], evidence
         return matches['status'], {'status':'source_unavailable'}
 
@@ -2007,7 +2065,7 @@ class ChatAgent:
             lines.append(f"{lead}{item['region']}《{value['title']}》{when}（北京时间）{item['field']}。")
         return '\n'.join(lines), 'success'
 
-    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card='',mechanic_server=None,activity_questions=(),fact_windows=None,knowledge_cache=None):
+    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card='',mechanic_server=None,activity_questions=(),fact_windows=None,knowledge_cache=None,chapter_lookup=None):
         runtime=self.runtime
         try:
             tool,args=validate_call(call,self.tools if registry is None else registry)
@@ -2056,14 +2114,23 @@ class ChatAgent:
                 return output,leases
             elif tool.kind=='story':
                 if call.name=='story_search':
-                    output=await finish_thread(partial(self.story.search,args['query'],args.get('filters')))
-                    story_handles.update((item['handle'],item['source_kind']) for item in output.get('items',[]))
+                    if chapter_lookup is None:
+                        output=await finish_thread(partial(self.story.search,args['query'],args.get('filters')))
+                        story_handles.update((item['handle'],item['source_kind']) for item in output.get('items',[]))
+                    else:
+                        output=await finish_thread(chapter_lookup.search,self.story,args)
+                        for item in output['items']:
+                            story_handles.setdefault(item['handle'],item['source_kind'])
                 else:
                     if fact_windows is not None and args['handle'] not in story_handles:
                         return {'status':'story_handle_unissued','retryable':True,
                                 'note':'只能从本轮剧情候选或已读场景的 handle 补读。'},leases
                     require(args['handle'] in story_handles,'story_handle_unissued')
-                    handle, before, after = args['handle'], args.get('before',1), args.get('after',1)
+                    handle = args['handle']
+                    chapter_hit = fact_windows is not None and story_handles[handle] is not None
+                    before, after = args.get('before',0 if chapter_hit else 1), args.get('after',0 if chapter_hit else 1)
+                    if chapter_hit and (before or after):
+                        return {'status':'story_scope_mismatch','note':'补查章节的候选只可读取命中场景。'},leases
                     if fact_windows is not None and (handle,before,after) in fact_windows:
                         return {'status':'already_visible','note':'此场景范围已读，可据已有正文作答或补读缺少的前后文。'},leases
                     output=await finish_thread(partial(self.story.read,handle,before=before,after=after))

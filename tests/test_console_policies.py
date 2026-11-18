@@ -4300,6 +4300,37 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inherited['coverage']['status'], 'waiting')
         self.assertFalse(any('evidence' in item for item in inherited['requirements']))
 
+    async def test_two_objectless_knowledge_requirements_need_a_visible_binding(self):
+        NativeRuntimeTests.reviewed_fixture(self, '蓝牌的领取条件为持有签条。')
+        items = [dict(label=label, entity_refs=[], fields=[], knowledge=True, difficulty='')
+                 for label in ('蓝牌的领取条件','蓝牌的归还地点')]
+        def task(requirements):
+            return self.call('research_task', action='set', goal='查清蓝牌的领取条件和归还地点',
+                             entity_refs=[], requirements=requirements)
+        states = []
+        async def respond(profile, body, **kwargs):
+            outputs = [json.loads(m['content']) for m in body['messages'] if m['role']=='tool']
+            if not outputs:
+                return self.result(calls=(task(items),))
+            if len(outputs)==1:
+                return self.result(calls=(self.call('knowledge_search', server='jp', date=None, version=None,
+                                                    query=items[0]['label']),))
+            if len(outputs)==2:
+                work, = self.backend.works.values()
+                coverage = work.chat_task.coverage()
+                states.append([row['complete'] for row in coverage['items']])
+                passage, = json.loads(outputs[1]['data'])['passages']
+                self.assertIn('持有签条', passage['text'])
+                binding = dict(entity_ref='', chunk_id=passage['chunk_id'])
+                return self.result(calls=(task([dict(items[0], evidence=[binding]), items[1]]),))
+            return self.result('领取要持有签条，归还地点缺资料。')
+        self.client.request.side_effect = respond
+        reply, _ = await self.prepare_native('/聊 把蓝牌的领取条件和归还地点分别查清')
+        self.assertEqual(states, [[False,False]])
+        self.assertEqual(reply['parts'][0]['business_status'], 'success')
+        coverage = self.backend.works[reply['delivery_id']].chat_task.coverage()
+        self.assertEqual([row['complete'] for row in coverage['items']], [True,False])
+
     async def test_knowledge_repeat_after_new_revision_and_unissued_binding(self):
         manifest = NativeRuntimeTests.reviewed_fixture(self).with_name('approvals.json')
         service = self.backend.knowledge
@@ -4660,11 +4691,106 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                                 if m['role']=='user' and 'story_evidence' in json.loads(m['content']))
                 self.assertEqual([s['scene_id'] for s in pre_read['scenes']], ['scene-1'])
                 if target:
-                    self.assertEqual([t['function']['name'] for t in wire[0]['tools']], ['story_read'])
+                    offered = {t['function']['name'] for t in wire[0]['tools']}
+                    self.assertEqual(offered, {'story_read','story_search'} if seq==3 else {'story_read'})
                     data = json.loads(next(m['content'] for m in wire[-1]['messages'] if m['role']=='tool'))
                 else:
                     data = pre_read
                 self.assertEqual(tuple(s['scene_id'] for s in data['scenes']), expected)
+
+    async def test_disconnected_chapter_research_preserves_fact_scope_and_reads_original(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        fixture = StoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        bundle = fixture.bundle()
+        template = bundle['scenes'][0]
+        pair = ['椎名立希','千早愛音']
+        def scene(sid, source, chapter, cast, line, translation):
+            return dict(template, scene_id=sid, source_id=source, chapter=chapter, title=chapter,
+                        participants=cast, previous_scene=None, next_scene=None,
+                        utterances=[dict(template['utterances'][0], speaker=cast[0], text_ja=line, translation=translation)])
+        original = '今は二人で譜面も書いているよ。'
+        bundle['scenes'] = [
+            scene('one','test-story','第1章',pair,'愛音とは同じクラスだよ。','我们同班。'),
+            scene('two','test-story','第2章',pair,original,'我们现在也一起写谱。'),
+            scene('other-source','elsewhere','第3章',pair,'別の資料。','另一来源。'),
+            scene('wrong-subject','test-story','第3章',['椎名立希','高松燈'],'別の二人。','另一组人物。'),
+            scene('taki-expression-guide-test','test-story','第3章',pair,'作例。','措辞示例。')]
+        bundle['scenes'][0]['title'] = '第1话 第1章'
+        bundle['scenes'][1]['title'] = '第2话 第2章'
+        bundle['sources'] = [dict(bundle['sources'][0], source_id=sid,
+                                  content_sha256=source_content_hash([s for s in bundle['scenes'] if s['source_id']==sid]))
+                             for sid in ('test-story','elsewhere')]
+        fixture.publish(bundle)
+        self.backend.model_runtime.agent.story = fixture.service
+        question = '立希和爱音是什么关系？结合前后两章各自给的说法。'
+        initial = fixture.service.search(question, limit=3, facts_only=True)
+        self.assertEqual([m['scene_id'] for m in initial['items']], ['one'])
+        self.assertEqual(fixture.service.search(question, {'chapter':'第2章'}, facts_only=True)['items'], [])
+        agent = self.backend.model_runtime.agent
+        for seq, limits in enumerate(({'tool_calls':3}, {'model_calls':2}), 1):
+            with self.subTest(limits=limits), patch.object(agent, 'budget', replace(agent.budget, **limits)):
+                bodies = self.capture_native_bodies()
+                self.client.request.side_effect = [self.result('第一章说两人同班，第二章缺资料。')]
+                reply, attempts = await self.prepare_native('/聊 '+question, seq=seq)
+                self.assertEqual(len(attempts), 1)
+                self.assertFalse(bodies[0].get('tools'))
+                self.assertNotIn(original, str(bodies[0]))
+                self.event(reply,'intent');self.event(reply,'ack')
+        simple_question = '立希和爱音是什么关系？'
+        cases = [(simple_question,None,[]),
+                 (simple_question+'结合第1章和第3章。','第3章',['story_scope_mismatch','story_scope_mismatch','no_results']),
+                 ('第1话中'+question,'第2章',['no_results']),
+                 (question,'第2章',['ok','ok'])]
+        for seq,(ask,target,expected) in enumerate(cases,3):
+            with self.subTest(target=target):
+                wire = []
+                def call(cid, name, **args):
+                    return ToolCall(cid,name,json.dumps(args,ensure_ascii=False))
+                async def respond(profile, body, **kwargs):
+                    wire.append(json.loads(json.dumps(body)))
+                    outputs = [json.loads(m['content']) for m in body['messages'] if m['role']=='tool']
+                    if not target:
+                        return self.result('两人同班。')
+                    if not outputs:
+                        if not body.get('tools'):
+                            return self.result('只查到第一章。')
+                        if target=='第3章':
+                            return self.result(calls=(call('outside','story_search',query=target,
+                                filters=dict(source_id='elsewhere')), call('unasked','story_search',query='第2章'),
+                                call('missing','story_search',query=target)))
+                        return self.result(calls=(call('s','story_search',query=target),))
+                    if outputs[-1]['status']=='no_results':
+                        return self.result('第一章说两人同班，'+target+'缺资料。')
+                    if len(outputs)==1:
+                        match, = outputs[0]['items']
+                        self.assertNotIn(original, str(match))
+                        return self.result(calls=(call('r','story_read',handle=match['handle']),))
+                    return self.result(outputs[-1]['scenes'][0]['utterances'][0]['text_ja'])
+                self.client.request.side_effect = respond
+                reply, attempts = await self.prepare_native('/聊 '+ask, seq=seq)
+                self.assertEqual(reply['parts'][0]['business_status'], 'success')
+                self.assertNotIn(original, str(wire[0]))
+                statuses = [json.loads(m['content'])['status'] for m in wire[-1]['messages'] if m['role']=='tool']
+                self.assertEqual(statuses,expected)
+                if expected==['ok','ok']:
+                    self.assertEqual(len(attempts),3)
+                    self.assertIn(original.rstrip('。'),reply['parts'][0]['text'])
+                    fixture.service.withdraw('test-story','fixture withdrawal after reading second chapter')
+                    self.assertFalse(self.backend.lookup(reply['request_id'],'e1')['send_allowed'])
+                    self.backend.finish(self.backend.works[reply['delivery_id']],'aborted')
+                    continue
+                elif target:
+                    self.assertEqual(len(attempts),2)
+                    self.assertIn(target+'缺资料',reply['parts'][0]['text'])
+                else:
+                    self.assertEqual(len(attempts),1)
+                    self.assertFalse(wire[0].get('tools'))
+                self.event(reply,'intent');self.event(reply,'ack')
 
     async def test_story_prefetch_and_duplicate_read_share_tool_and_final_budget(self):
         from test_platform_boundary import StoryPublicationTests
