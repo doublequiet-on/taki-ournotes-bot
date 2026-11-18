@@ -20,7 +20,7 @@ from ..domain.knowledge import KnowledgeError
 from ..domain.model_calls import ModelError, ToolCall, require
 from ..domain.story import StoryError
 from ..domain.chat_images import ImageError, MAX_TOTAL_BYTES
-from ..sources.chat_images import ImageLoader,ImageCache
+from ..sources.chat_images import ImageLoader,ImageCache,SentQueryImages
 from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for, scope_mentions, requested_server, chat_query_question, chat_background_only
 from ..natural_query.query_validation import EntityEvidence
 from ..query.continuation import catalog_version
@@ -451,6 +451,7 @@ class ChatAgent:
         self.story=StoryService(root) if root else None
         self.image_loader=ImageLoader()
         self.images=ImageCache()
+        self.sent_query_images=SentQueryImages()
         self.services=ChatServices(path.parent,runtime.backend.instance_id,runtime.backend.app_id,
             authority=runtime.admin.db,require_authority=True)
         self.service_budget=ServiceBudget(runtime.usage,runtime.backend.instance_id,runtime.backend.app_id)
@@ -608,7 +609,15 @@ class ChatAgent:
 
     async def read_unlinked_quote_images(self,work,deadline):
         request=work.request
-        if not request.quoted_attachments or not self.store.unlinked_quote_media_allowed(request.scope):
+        cached=()
+        if not request.quoted_attachments:
+            if (not request.quoted_text or request.reference or request.kind!='group' or request.trigger!='command'
+                    or request.policy.natural_query!='model'):
+                return None
+            image=self.sent_query_images.match(self.image_scope(request),request.quoted_text)
+            if image is None:return None
+            cached=(image,)
+        if not self.store.unlinked_quote_media_allowed(request.scope):
             return None
         vision=self.runtime.capabilities_for(work).vision(work.model_snapshot)
         if vision is None:
@@ -618,11 +627,11 @@ class ChatAgent:
                             for mid in work.chat_addition_images)
         except ImageError:
             return None
-        if len(request.quoted_attachments)+len(request.attachments)+added_count>3:
+        if len(cached or request.quoted_attachments)+len(request.attachments)+added_count>3:
             return None
         try:
             loaded=await self.load_images(work,request.quoted_attachments,request.timestamp_ms,
-                                          deadline-self.budget.final_seconds)
+                                          deadline-self.budget.final_seconds,cached=cached)
         except ImageError as exc:
             self.runtime.backend.diagnostics.chat_event(request.request_id,'image',self.runtime.backend.clock(),
                 status=exc.code,loaded_images=0,automatic=False)
@@ -1141,6 +1150,9 @@ class ChatAgent:
         deadline=min(deadline,work.content_deadline)
         work.model_attempt_limit=self.budget.model_calls
         request=work.request
+        caption=self.sent_query_images.caption(request.quoted_text)
+        if caption is not None and not request.reference:
+            request=replace(request,quoted_text=caption or None,quote_hint='image')
         preview=request.quoted_text
         context_request=request
         if work.missing_anchor:

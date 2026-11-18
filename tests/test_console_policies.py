@@ -5509,6 +5509,42 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('哪两个人', plan['parts'][0]['text'])
         self.event(plan, 'intent'); self.event(plan, 'ack')
 
+    async def test_sent_query_markdown_supplies_exact_image_only_within_its_group(self):
+        import base64
+        import hashlib
+        import io
+        from PIL import Image
+
+        self.attachments=[]
+        agent=self.backend.model_runtime.agent
+        buf=io.BytesIO()
+        Image.new('RGB',(16,24),'blue').save(buf,format='JPEG')
+        data=buf.getvalue()
+        digest=hashlib.md5(data,usedforsecurity=False).hexdigest()
+        preview=f"![查询结果 #16px #24px](https://qqbot.ugcimg.cn/1234567890/qqbot-media/{'a'*40}/{digest})"
+        scope=json.dumps(Request_scope(),sort_keys=True,separators=(',',':'))
+        with patch.object(self.backend.gate.prepare,'return_value',PreparedReply('查询结果',data)):
+            original,_=await self.prepare_native('/一图流',seq=1)
+        self.assertIsNone(agent.sent_query_images.match(scope,preview))
+        self.event(original,'intent');self.event(original,'ack')
+        self.assertIsNotNone(agent.sent_query_images.match(scope,preview))
+        raw={**self.request('native2',2),'quoted_text':preview}
+        self.assertIsNone(agent.sent_query_images.match('another-group',preview))
+        self.assertIsNone(agent.sent_query_images.match(scope,preview.replace('#16px','#17px')))
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('蓝色。')
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你分析一下这期活动',seq=2)
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        urls=[part['image_url'] for row in bodies[0]['input'] if isinstance(row.get('content'),list)
+              for part in row['content'] if part['type']=='input_image']
+        self.assertEqual(urls,['data:image/jpeg;base64,'+base64.b64encode(data).decode()])
+        self.assertNotIn('ugcimg.cn',json.dumps(bodies[0]))
+        self.event(plan,'intent');self.event(plan,'ack')
+        with patch('ournotes_bot.sources.chat_images.time.monotonic',return_value=float('inf')):
+            self.assertIsNone(agent.sent_query_images.match(scope,preview))
+
     async def test_qq_quote_attachment_reaches_model_without_publishing_unlinked_material(self):
         quoted=self.attachments
         self.attachments=[]
