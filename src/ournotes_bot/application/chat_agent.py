@@ -1415,7 +1415,7 @@ class ChatAgent:
         if vision is not None:
             registry['image_read']=Tool('image_read','按本轮上下文中原消息ID重读仍有效的本群图片，用于比较或追问；保持原作者。缓存过期时返回不可用，不能读取任意URL。',
                 obj({'message_id':string(256)},('message_id',)),'image')
-        registry['group_memory_search']=Tool('group_memory_search','有回忆线索时检索本群近30天Taki参与过的发言或约定。可改写query。外部规则来源不明时直接澄清。',
+        registry['group_memory_search']=Tool('group_memory_search','有回忆线索时查本群近30天Taki参与过的发言或约定。query 用旧消息可能原样出现的对象名；记不清原话就先只搜这个名称。外部规则来源不明时直接澄清。',
             obj({'query':string(120)},('query',)),'memory')
         registry['group_memory_read']=Tool('group_memory_read','读取本群指定消息ID及其发言者；仅支持已保存的参与片段。',
             obj({'message_ids':{'type':'array','items':string(256),'minItems':1,'maxItems':8}},('message_ids',)),'memory')
@@ -2121,7 +2121,7 @@ class ChatAgent:
                     'images':loaded,'image_detail':vision.detail}},leases
             elif tool.kind=='memory':
                 # SQLite remains on its owning event-loop thread.
-                output=(self.store.search(work.request.scope,args['query'],limit=8) if call.name=='group_memory_search'
+                output=(self.store.search(work.request.scope,args['query'],limit=8,recall_from=work.request.message_id) if call.name=='group_memory_search'
                         else self.store.read(work.request.scope,args['message_ids']))
                 while output['messages'] and len(json.dumps(output,ensure_ascii=False).encode())>24576:
                     output['messages'].pop()

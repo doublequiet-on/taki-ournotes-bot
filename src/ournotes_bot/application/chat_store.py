@@ -22,6 +22,17 @@ def normalized(value):
     return unicodedata.normalize('NFKC',value).casefold()
 
 
+def matching_clues(text, *clues):
+    text = normalized(text)
+    # The caller orders clues longest first. Count a nested term only if
+    # its longer wording is absent from this particular message.
+    matched = []
+    for clue in clues:
+        if clue in text and not any(clue in other for other in matched):
+            matched.append(clue)
+    return len(matched)
+
+
 class ChatStore:
     def __init__(self,path,identity,*,clock=time.time,deletions_path=None,restore_state=None):
         self.clock,self.identity=clock,identity
@@ -30,6 +41,7 @@ class ChatStore:
         self.db=sqlite3.connect(self.path)
         self.db.row_factory=sqlite3.Row
         self.db.create_function('chat_normalized',1,normalized,deterministic=True)
+        self.db.create_function('chat_matching_clues',-1,matching_clues,deterministic=True)
         try:
             self.db.execute('PRAGMA secure_delete=ON')
             self.db.execute('PRAGMA synchronous=FULL')
@@ -371,7 +383,7 @@ class ChatStore:
             if row: rows.append(self._message(row))
         return {'status':'ok' if rows else 'no_results','messages':rows,'source_kind':'group_dialogue','revision':self.revision}
 
-    def search(self,scope,query,*,limit=8,before_ms=None):
+    def search(self,scope,query,*,limit=8,before_ms=None,recall_from=None):
         self.sweep();key=self._scope(scope);terms=search_terms(query)
         if type(limit) is not int or not 1<=limit<=20: raise ValueError('chat_memory_limit')
         if before_ms is not None and (type(before_ms) is not int or not 0<=before_ms<10**14): raise ValueError('chat_memory_time')
@@ -379,11 +391,13 @@ class ChatStore:
         # FTS trigram handles arbitrary Japanese/Chinese substrings. One/two
         # character terms use scoped instr, since SQLite trigrams need 3 chars.
         indexed=[term for term in terms if len(term)>=3]
-        conditions=['m.scope=?'];parameters=[key]
-        for term in terms:
-            conditions.append('instr(chat_normalized(m.text),?)>0');parameters.append(term)
-        if before_ms is not None: conditions.append('m.timestamp_ms<=?');parameters.append(before_ms)
-        parameters.append(limit)
+        scope_conditions=['m.scope=?'];scope_params=[key]
+        if recall_from is not None:
+            scope_conditions.append('m.message_id!=?');scope_params.append(message_id(recall_from))
+        if before_ms is not None: scope_conditions.append('m.timestamp_ms<=?');scope_params.append(before_ms)
+        scope_filter=' AND '.join(scope_conditions)
+        conditions=[scope_filter,*['instr(chat_normalized(m.text),?)>0' for _ in terms]]
+        parameters=[*scope_params,*terms,limit]
         if indexed:
             match=' AND '.join('"'+term.replace('"','""')+'"' for term in indexed)
             sql='''SELECT m.* FROM memory_messages m JOIN memory_fts f
@@ -393,6 +407,17 @@ class ChatStore:
         else:
             candidates=self.db.execute('SELECT m.* FROM memory_messages m WHERE '+' AND '.join(conditions)
                 +' ORDER BY m.timestamp_ms DESC,m.rowid DESC LIMIT ?',parameters).fetchall()
+        if not candidates and recall_from is not None:
+            # A recall query may include question words and alternative terms.
+            # Require two independent clues; a lone shared noun is too weak.
+            clues=sorted({term for term in terms if len(term)>=2},key=len,reverse=True)
+            if len(clues)>=2:
+                slots=','.join('?' for _ in clues)
+                ranked=self.db.execute(f'''SELECT m.*,chat_matching_clues(m.text,{slots}) AS hits
+                    FROM memory_messages m WHERE {scope_filter}
+                    ORDER BY hits DESC,m.timestamp_ms DESC,m.rowid DESC LIMIT ?''',
+                    [*clues,*scope_params,limit])
+                candidates=[row for row in ranked if row['hits']>=2]
         rows=[self._message(row) for row in candidates]
         return {'status':'ok' if rows else 'no_results','messages':rows,'source_kind':'group_dialogue','revision':self.revision}
 

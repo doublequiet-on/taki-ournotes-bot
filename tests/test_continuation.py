@@ -958,6 +958,33 @@ class ChatMemoryStoreTests(unittest.TestCase):
         self.assertEqual([r['message_id'] for r in self.store.recent(self.scope)],['u1-message','assistant1'])
         self.assertEqual(self.store.read(self.scope,['fake','uncertain','denied'])['status'],'no_results')
 
+    def test_recall_uses_multiple_clues_after_exact_miss_and_excludes_current_question(self):
+        terms='蓝牌 要还给谁 归还 借'
+        def add(mid,text,*,scope=None):
+            self.begin(mid,[self.message(mid,text)],scope=scope)
+        add('answer','读书会说好了：蓝牌归还给小遥。')
+        add('weak','我喜欢蓝牌上的图案。')
+        add('current',terms)
+        add('other-answer',terms,scope={**self.scope,'conversation_id':'other'})
+        def ids(**opts):
+            return [row['message_id'] for row in self.store.search(self.scope,terms,**opts)['messages']]
+        self.assertEqual(ids(),['current'])
+        self.assertEqual(ids(recall_from='current'),['answer'])
+        nested=self.store.search(self.scope,'蓝牌 蓝牌要还给谁 归还',recall_from='current')
+        self.assertEqual([row['message_id'] for row in nested['messages']],['answer'])
+        add('more','借的蓝牌已经归还。')
+        self.assertEqual(ids(recall_from='current',limit=1),['more'])
+        add('exact',terms)
+        self.assertEqual(ids(recall_from='current'),['exact'])
+        self.assertEqual(ids(recall_from='current',before_ms=int(self.now[0]*1000)-1),[])
+        self.store.delete_messages(self.scope,['answer','more','exact'])
+        self.assertEqual(ids(recall_from='current'),[])
+        self.assertEqual(self.store.search(self.scope,'蓝牌 蓝牌 蓝 NO_MATCH',recall_from='current')['messages'],[])
+        self.assertEqual(self.store.search(self.scope,'蓝牌上 蓝牌 NO_MATCH',recall_from='current')['messages'],[])
+        add('expiring','蓝牌已归还。')
+        self.now[0]+=30*86400+1
+        self.assertEqual(ids(recall_from='current'),[])
+
     def test_same_name_and_message_id_remain_scoped_and_speakers_distinct(self):
         self.begin(messages=[self.message(),self.message('u2-message','我喜欢提前规划',speaker='u2')])
         other={**self.scope,'conversation_id':'g2'}
