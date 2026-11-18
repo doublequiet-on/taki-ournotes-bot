@@ -222,6 +222,17 @@ class InformationQueryTests(unittest.TestCase):
         self.assertEqual(execute_character('灯皇', repo).views[0].title, '高松灯')
         self.assertEqual(len(execute_character('卖狗', repo).views[0].rows), 2)
 
+    def test_profile_advertises_only_uniquely_resolved_aliases(self):
+        repo = Repository(catalog(characters=(person(1, '高松灯'),
+                                            person(2, '千早爱音', fields={'nickname': {'zh': 'tmr'}}))))
+        profile = execute_character('1', repo).views[0]
+        aliases = next(row.body[0] for row in profile.rows if row.title == '常用查名').split(' / ')
+        self.assertIn('灯皇', aliases)
+        self.assertNotIn('tmr', aliases)
+        self.assertEqual(execute_character('tmr', repo).views[0].title, '千早爱音')
+        for alias in aliases:
+            self.assertEqual(execute_character(alias, repo).views[0].title, '高松灯')
+
     def test_character_explicit_band_filter_and_alias(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'), person(2, '千早爱音'), person(3, '三角初华', 'Ave Mujica'))))
         for term in ('乐队=MyGO', '乐队=卖狗', '乐队＝MyGO!!!!!'):
@@ -230,13 +241,35 @@ class InformationQueryTests(unittest.TestCase):
         self.assertEqual(execute_character('乐队=', repo).status, 'invalid_arguments')
         self.assertEqual(execute_character('乐队=不存在', repo).status, 'no_results')
 
+    def test_character_role_filter_covers_dual_roles_and_band_intersection(self):
+        people = (
+            person(1, '样例一', fields={'bandPart': {'ja': 'Gt.'}}),
+            person(2, '样例二', 'Ave Mujica', fields={'bandPart': {'ja': 'Gt.&Vo.'}}),
+            person(3, '样例三', 'Ave Mujica', fields={'bandPart': {'ja': 'DJ&Mp.'}}),
+            person(4, '资料未确认'),
+        )
+        repo = Repository(catalog(characters=people))
+        for query, expected in (
+            ('担当=吉他', [1, 2]), ('乐队＝Ave Mujica 担当=Gt.', [2]),
+            ('担当=ボーカル 乐队=Ave Mujica', [2]), ('担当=DJ', [3]), ('担当=操控', [3]),
+        ):
+            with self.subTest(query=query):
+                result = execute_character(query, repo)
+                self.assertEqual([row.command for row in result.views[0].rows],
+                                 [f'/查角色 {ident}' for ident in expected])
+        self.assertIn('担当未确认', execute_character('担当=吉他', repo).text)
+        self.assertNotIn('担当未确认', execute_character('乐队=Ave Mujica 担当=吉他', repo).text)
+        self.assertEqual(execute_character('担当=鼓', repo).status, 'no_results')
+        for query in ('担当=', '担当=未知', '担当=吉他 担当=主唱', '乐队= 担当=吉他'):
+            self.assertEqual(execute_character(query, repo).status, 'invalid_arguments')
+
     def test_mujica_uses_civilian_title_and_preserves_stage_name_search(self):
         repo = Repository(catalog(characters=(person(7, 'Mortis / 若叶睦', 'Ave Mujica'),)))
         for term in ('7', 'Mortis', '若叶睦', '睦头'):
             result = execute_character(term, repo)
             self.assertEqual(result.views[0].title, '若叶睦')
             self.assertIn('艺名\nMortis', result.text)
-            self.assertIn('/查卡 若叶睦', result.text)
+            self.assertIn('/查卡 角色ID=7', result.text)
 
     def test_character_ambiguous_partial_keeps_candidates(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'), person(2, '高桥测试'))))
@@ -250,6 +283,28 @@ class InformationQueryTests(unittest.TestCase):
         repo = Repository(catalog(characters=(person(11, '1'),)))
         self.assertEqual(execute_character('1', repo).status, 'no_results')
 
+    def test_character_id_rejects_digits_joined_by_name_normalization(self):
+        repo = Repository(catalog(characters=(person(1, '高松灯'), person(12, '千早爱音'))))
+        for term in ('-1', '－１', '1 2', '1-2'):
+            with self.subTest(term=term):
+                self.assertEqual(execute_character(term, repo).status, 'invalid_arguments')
+        self.assertEqual(execute_character(' １ ', repo).views[0].title, '高松灯')
+        self.assertEqual(execute_character('01', repo).status, 'no_results')
+
+    def test_single_latin_letter_requires_an_exact_name_or_alias(self):
+        people = (person(1, 'Tomori', 'MyGO!!!!!'), person(2, 'Nyamu', 'Ave Mujica'))
+        repo = Repository(catalog(characters=people))
+        for term in ('m', '乐队=m'):
+            with self.subTest(term=term):
+                self.assertEqual(execute_character(term, repo).status, 'no_results')
+        self.assertEqual(execute_character('Tomo', repo).views[0].title, 'Tomori')
+        millsage = person(3, '伊沢なつめ', 'millsage')
+        repo = Repository(catalog(characters=(*people, millsage)))
+        for term in ('Ｍ', '乐队=m'):
+            with self.subTest(term=term):
+                result = execute_character(term, repo)
+                self.assertEqual([row.command for row in result.views[0].rows], ['/查角色 3'])
+
     def test_character_card_counts_deduplicate_multicharacter_support(self):
         member = card(1)
         support = card(1, support=True, people=(1, 1, 2))
@@ -257,7 +312,7 @@ class InformationQueryTests(unittest.TestCase):
         result = execute_character('1', repo)
         counts = [row.body[0] for row in result.views[0].rows if row.title in {'成员卡', '留影卡'}]
         self.assertEqual(counts, ['1 张', '1 张'])
-        self.assertIn('/查留影卡 高松灯', result.text)
+        self.assertIn('/查留影卡 角色ID=1', result.text)
         self.assert_same_text(result)
 
     def test_character_incomplete_links_do_not_claim_exact_count(self):
@@ -498,11 +553,124 @@ class ActivityAnnouncementTests(unittest.TestCase):
 
 class PublicQueryContractTests(unittest.TestCase):
 
+    def test_arena_stage_and_cutoff_have_distinct_modes_and_preserve_rank_scope(self):
+        from types import SimpleNamespace
+        from ournotes_bot.query.public_queries import execute_arena, parse_arena
+        from ournotes_bot.domain.public_queries import PublicQueryError
+
+        for text, expected in [
+            ('MyGO', (1, 100, (1, 2, 3, 10, 100))),
+            ('MyGO 榜单', (1, 20, ())),
+            ('MyGO T1000', (1000, 1000, (1000,))),
+            ('MyGO 50', (40, 60, ())),
+            ('MyGO 20 - 40', (20, 40, ())),
+            ('T100 T10 Ｔ１ MyGO 仅数值', (1, 100, (1, 10, 100))),
+        ]:
+            with self.subTest(text=text):
+                request = parse_arena(text, command='查激奏榜线')
+                self.assertEqual((request.first, request.last, request.positions), expected)
+        for text in ('MyGO 2-1', 'MyGO 1-101', 'MyGO T1 T101', 'MyGO 人数 T1', 'MyGO 50 T100'):
+            with self.subTest(text=text), self.assertRaises(PublicQueryError):
+                parse_arena(text, command='查激奏榜线')
+
+        # A repository without a source also proves these errors never get to I/O.
+        repo = SimpleNamespace()
+        missing = execute_arena('hk 赛季=7 T100 仅数值', repo, command='查激奏榜线')
+        self.assertEqual(missing.status, 'invalid_arguments')
+        self.assertIn('/查激奏榜线 hk MyGO!!!!! 赛季=7 T100 仅数值', missing.text)
+        self.assertIn('/查激奏榜线', execute_arena('MyGO 人数', repo, command='查激奏舞台').text)
+        self.assertIn('/查激奏舞台', execute_arena('MyGO 排期', repo, command='查激奏榜线').text)
+
+    def test_arena_stage_rules_and_records_project_the_requested_snapshot(self):
+        import json
+        from types import SimpleNamespace
+        from ournotes_bot.query.public_queries import execute_arena
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+
+        old = {'startAt': 1000, 'endAt': 1999, 'musicType': 99, 'missions': [1, 2, 3]}
+        rules = [dict(old, startAt=i * 1000, endAt=i * 1000 + 999, musicType=i) for i in range(1, 6)]
+        rank = dict(id=1, name='新手1', rank=1, points=0, resetPoints=0, startAt=0)
+        ranks = [rank, dict(rank, id=2, name='新手2', points=50),
+                 dict(rank, id=3, name='青铜1', rank=2, points=100),
+                 dict(rank, id=4, name='青铜2', rank=2, points=200, startAt=3000)]
+        league = dict(id=7, bandId=1, name='MyGO', rules=rules, songs=[], ranks=ranks)
+        reward = {'name': '测试奖励', 'leagueId': 7, 'rankId': 1, 'count': 3, 'from': 0, 'to': 0}
+        season = dict(seasonId=7, title='测试赛季', startAt=1, endAt=30000, leagues=[league], dailyRewards=[reward])
+        identity = dict(server='intl', releaseId='r-' + 'e' * 20, sourceId='fixture')
+        calls = []
+
+        def fetch(url, *args):
+            calls.append(url)
+            if '/release?' in url:
+                self.assertIn('/servers/intl/', url)
+                data = dict(schema='haneoka-resource-release-identity-v1', **identity)
+            elif '/servers/intl/arena?' in url:
+                data = dict(schema='haneoka-arena-v1', identity=identity, entries={'7': season})
+            elif url.endswith('/tw/arena/seasons/7/leagues/1/ranking?start=1'):
+                scores = [dict(rank=i, point=101-i, name='fixture') for i in range(1, 100)]
+                scores.append(dict(rank=99, point=0, name='隐藏昵称', profileId='21234567890'))
+                data = dict(region='tw', seasonId='7', bandId='1', start=1, end=100, maxRank=200, rows=scores)
+            elif url.endswith('/tw/arena/seasons/7/leagues/1/population?thresholds=0%2C50%2C100'):
+                data = dict(region='tw', seasonId='7', bandId='1', maxRank=5,
+                            tiers=[dict(threshold=0, count=0), dict(threshold=50, count=3), dict(threshold=100, count=2)])
+            else:
+                self.fail('unexpected source request: ' + url)
+            return 200, json.dumps(data).encode(), {}
+
+        source = PublicQueries(fetch=fetch, clock=lambda: 1.5)
+        repo = SimpleNamespace(public_queries=source, capture_catalog=lambda: SimpleNamespace(source_snapshot=None))
+        overview = execute_arena('hk MyGO', repo, now=1.5, command='查激奏舞台')
+        self.assertEqual(overview.status, 'success')
+        self.assertIn('当前规则', overview.text)
+        self.assertIn('接下来的轮换', overview.text)
+        self.assertIn('08:00:04', overview.text)
+        self.assertNotIn('08:00:05', overview.text)
+        self.assertEqual(len(calls), 2)
+        reward_view = execute_arena('hk MyGO 段位与奖励', repo, now=1.5, command='查激奏舞台')
+        self.assertIn('积分门槛：0', reward_view.text)
+        self.assertIn('测试奖励 ×3', reward_view.text)
+        empty = execute_arena('hk MyGO 乐曲', repo, now=1.5, command='查激奏舞台')
+        self.assertEqual(empty.status, 'no_results')
+        self.assertIn('暂无已公开乐曲', empty.text)
+        values = execute_arena('hk MyGO T100 仅数值', repo, now=1.5, command='查激奏榜线')
+        self.assertEqual(values.status, 'success')
+        self.assertFalse(values.views)
+        self.assertIn('T100\n舞台积分（AP）：0', values.text)
+        self.assertNotIn('隐藏昵称', values.text)
+        self.assertEqual(len(calls), 3)
+        also_first = execute_arena('hk MyGO T1 T100', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('T100 · 显示名次 99', also_first.text)
+        self.assertEqual(len(calls), 3)
+        population = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertEqual(population.status, 'success')
+        self.assertIn('联赛上榜人数\n5', population.text)
+        self.assertIn('新手\n舞台积分 0–99 · 人数：3', population.text)
+        self.assertIn('青铜\n舞台积分 100+ · 人数：2', population.text)
+        self.assertNotIn('新手1', population.text)
+        divisions = execute_arena('hk MyGO 人数明细', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('新手1\n舞台积分 0–49 · 人数：0', divisions.text)
+        self.assertIn('新手2\n舞台积分 50–99 · 人数：3', divisions.text)
+        self.assertNotIn('青铜2', divisions.text)
+        self.assertEqual(len(calls), 4)
+
+        league['ranks'] = [ranks[-1]]
+        source.cache.clear()
+        future = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('暂无已开放的段位', future.text)
+        self.assertTrue(calls[-1].split('?')[0].endswith('/servers/intl/arena'))
+
+        league['ranks'] = []
+        source.cache.clear()
+        missing = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertEqual(missing.status, 'data_unavailable')
+        self.assertIn('暂无段位门槛资料', missing.text)
+        self.assertTrue(calls[-1].split('?')[0].endswith('/servers/intl/arena'))
+
     def test_public_projection_preserves_positions_states_and_snapshot_times(self):
         import json
         from types import SimpleNamespace
         from ournotes_bot.domain.public_queries import PublicSnapshot
-        from ournotes_bot.query.public_queries import execute_arena, execute_player, quality_lines, stamp
+        from ournotes_bot.query.public_queries import execute_arena, quality_lines, stamp
         league = {'id': 1, 'bandId': 1, 'name': 'MyGO!!!!!', 'rules': [], 'ranks': []}
         catalog = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 9999999999999, 'leagues': [league]}}}
         board = {'rows': [{'position': 99, 'rank': 99, 'point': 0, 'pointState': 'source_zero', 'name': 'zero'}, {'position': 100, 'rank': 99, 'point': None, 'pointState': 'null', 'name': 'unknown'}]}
@@ -518,11 +686,6 @@ class PublicQueryContractTests(unittest.TestCase):
         self.assertIn('source_zero', result.text)
         self.assertIn('null', result.text)
         from dataclasses import replace
-        source.player = lambda request: replace(snapshot, body=b'{"profile":{"name":"fixture"}}')
-        player = execute_player('1', repo)
-        self.assertEqual(player.status, 'success')
-        self.assertIn('来源观测：' + stamp(snapshot.observed_ms), player.text)
-        self.assertIn('来源更新：未获取', player.text)
         self.assertIn('来源观测：未获取', quality_lines(replace(snapshot, observed_ms=None)))
 
 
@@ -547,15 +710,9 @@ class PublicQueryContractTests(unittest.TestCase):
         fact=project_details(event,lambda path:'verified:'+path if path else '')[0].facts[0]
         self.assertEqual((fact.image_url,fact.image_kind),('verified:card','portrait'))
 
-    def test_public_id_precision_regions_and_invalid_arguments(self):
-        from ournotes_bot.query.public_queries import parse_player, parse_arena
+    def test_arena_regions_and_invalid_arguments(self):
+        from ournotes_bot.query.public_queries import parse_arena
         from ournotes_bot.domain.public_queries import PublicQueryError
-        self.assertEqual(parse_player('9223372036854775807').profile_id, '9223372036854775807')
-        for region, ident in [('hk', '21234567890'), ('en', '31234567890'), ('kr', '41234567890')]:
-            self.assertEqual(parse_player(ident + ' ' + region + ' 名片 页3').page, 3)
-        for query in ('0', '01', '9223372036854775808', '31234567890 hk', '1 jp hk', '1 页3', '1 名片 页0'):
-            with self.subTest(query=query), self.assertRaises(PublicQueryError):
-                parse_player(query)
         self.assertEqual(parse_arena('MyGO!!!!! hk 榜单 排名=90-100').last, 100)
         for query in ('MyGO!!!!! 榜单 排名=2-1', 'MyGO!!!!! 榜单 排名=1-101', 'MyGO!!!!! jp hk', '不存在的乐队'):
             with self.subTest(query=query), self.assertRaises(PublicQueryError):
@@ -626,45 +783,17 @@ class PublicQueryContractTests(unittest.TestCase):
                 source.arena(region)
 
 
-    def test_player_identity_and_cache_expiration(self):
-        import json
+    def test_empty_arena_document_rejected_at_source(self):
         from ournotes_bot.sources.haneoka.public_queries import PublicQueries
-        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
-        calls, now = [], [100]
-        value = {'region': 'jp', 'profileId': '99', 'profile': {'name': 'fixture', 'rankExp': 0, 'totalFavorite': 0}}
-        def fetch(*args):
-            calls.append(args)
-            return 200, json.dumps(value).encode(), {}
-        source = PublicQueries(fetch=fetch, clock=lambda: now[0])
-        first = source.player(PlayerRequest('99'))
-        self.assertEqual(first, source.player(PlayerRequest('99')))
-        self.assertEqual(len(calls), 1)
-        now[0] += 60
-        source.player(PlayerRequest('99'))
-        self.assertEqual(len(calls), 2)
-        value['region'] = 'kr'
-        with self.assertRaises(PublicQueryError):
-            source.player(PlayerRequest('100'))
-
-    def test_source_bound_namecard_does_not_fetch_foreign_or_other_player(self):
-        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
-        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
-        calls = []
-        source = PublicQueries(fetch=lambda *args: calls.append(args))
-        for path in ('https://evil.invalid/image.png', '/api/v1/game/records/jp/players/100/cards/1/download?file=99_a',
-                     '/api/v1/game/records/jp/players/99/cards/1/download?file=100_a'):
-            with self.assertRaises(PublicQueryError):
-                source.namecard(PlayerRequest('99'), {'page': 1, 'downloadUrl': path})
-        self.assertFalse(calls)
+        from ournotes_bot.domain.public_queries import PublicQueryError
         source = PublicQueries(fetch=lambda *args: (200, b'{}', {}))
         with self.assertRaises(PublicQueryError) as failure:
             source.arena('jp')
         self.assertEqual(failure.exception.status, 'invalid_source')
 
-    def test_arena_null_song_rules_and_malformed_namecard_reject_at_source(self):
-        import json
-        from ournotes_bot.sources.haneoka.public_queries import arena_document, PublicQueries
-        from ournotes_bot.domain.public_queries import PublicQueryError, PlayerRequest
+    def test_arena_null_song_rules_reject_at_source(self):
+        from ournotes_bot.sources.haneoka.public_queries import arena_document
+        from ournotes_bot.domain.public_queries import PublicQueryError
         song = {'musicId': 1, 'musicTitle': 'fixture', 'musicType': 1, 'arenaMissions': [1, 2, 3], 'arenaPublishedAt': 0}
         league = {'id': 1, 'bandId': 1, 'name': 'fixture', 'rules': [], 'ranks': [], 'songs': [song]}
         document = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 2, 'leagues': [league]}}}
@@ -675,18 +804,15 @@ class PublicQueryContractTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(PublicQueryError):
                 arena_document(document)
             song[field] = original
-        for card in ({'name': 1}, {'pages': [{'page': 1, 'imageUrl': 1}]}):
-            data = {'region': 'jp', 'profileId': '99', 'profile': {'profileCard': card}}
-            source = PublicQueries(fetch=lambda *args: (200, json.dumps(data).encode(), {}))
-            with self.assertRaises(PublicQueryError):
-                source.player(PlayerRequest('99'))
 
     def test_local_grammar_requires_whole_question(self):
         from ournotes_bot.natural_query.on_query import public_information_command
-        self.assertEqual(public_information_command('玩家 9223372036854775807 jp'), '/查玩家 9223372036854775807 jp')
         self.assertEqual(public_information_command('MyGO竞技场人数'), '/查竞技场 MyGO 人数')
+        self.assertEqual(public_information_command('MyGO激奏榜线 T100多少'), '/查激奏榜线 MyGO T100')
+        self.assertEqual(public_information_command('MyGO激奏榜线多少分'), '/查激奏榜线 MyGO')
+        self.assertEqual(public_information_command('韩服 MyGO 的激奏榜线人数明细'), '/查激奏榜线 韩服 MyGO 人数明细')
+        self.assertEqual(public_information_command('MyGO激奏榜线 T100再猜一下'), '/查激奏榜线 用法')
         self.assertEqual(public_information_command('本期活动奖励'), '/查活动 奖励')
-        self.assertIsNone(public_information_command('玩家 99 jp 顺便猜一下密码'))
 
     def test_activity_sections_keep_conditions_unknown_and_explicit_links(self):
         from ournotes_bot.sources.haneoka.activity_details import project_details

@@ -15,6 +15,7 @@ from ..query.song_identity import QueryProblem
 from ..query.song_query import parse_filter
 from ..query.song_conditions import extract_song_conditions, remove_song_conditions
 from ..query.card_catalog import parse_card_request
+from ..query.ranking_positions import RANK_PART
 from ..structured_query import QuerySpec
 
 
@@ -78,20 +79,41 @@ def color_conditions(text):
     return text
 
 
+_RANK_QUESTION_END = re.compile(r'\s*(?:现在\s*)?(?:是\s*)?(?:积分\s*)?多少(?:分|积分|AP)?$', re.I)
+
+
 def public_information_command(question):
     """Whole-question grammar; execution and identity checks stay in direct queries."""
-    text = question.strip().strip('？?。！!')
+    text = question.strip()
+    if re.match(r'^[/／]?查激奏榜线(?:\s|$)', text):
+        return _RANK_QUESTION_END.sub('', text.rstrip('？?。'))
+    if re.match(r'^[/／]?(?:查激奏舞台|查竞技场)(?:\s|$)', text):
+        return text
+    text = text.strip('？?。！!')
     text = re.sub(r'^(?:请|帮我|查询|查看|查一下)\s*', '', text)
-    player = re.fullmatch(r'(?:查)?玩家\s+([0-9]{1,19})(?:\s+(jp|hk|tw|kr|en|日服|国服|韩服|英服))?(?:\s+(名片)(?:\s+(页[1-9][0-9]{0,2}))?)?', text, re.I)
-    if player:
-        return '/查玩家 ' + ' '.join(value for value in player.groups() if value)
     event = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(?:本期|这期|当前)活动(?:的)?(加成|奖励|任务|卡池)', text, re.I)
     if event:
         return '/查活动 ' + ' '.join(value for value in event.groups() if value)
-    arena = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(.*?)竞技场(?:的)?(总览|日程|曲池|段位|奖励|榜单|排名|人数)?', text, re.I)
+    board = re.fullmatch(
+        r'(?:查\s*)?(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(.*?)\s*(?:的\s*)?激奏榜线\s*(.*)',
+        unicodedata.normalize('NFKC', text), re.I)
+    if board:
+        region, band, tail = board.groups()
+        tail = _RANK_QUESTION_END.sub('', tail).strip()
+        mode = {'排名': '榜单', '排行榜': '榜单', '段位人数': '人数', '段位人数明细': '人数明细'}.get(tail, tail)
+        selectors = mode.replace(',', ' ')
+        if mode in {'', '榜单', '人数', '人数明细'} or (RANK_PART.search(selectors) and not RANK_PART.sub(' ', selectors).strip()):
+            return ' '.join(value for value in ('/查激奏榜线', region, band.strip(), mode) if value)
+        return '/查激奏榜线 用法'
+    arena = re.fullmatch(
+        r'(?:查\s*)?(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(.*?)(竞技场|激奏舞台)'
+        r'\s*(?:的\s*)?(总览|概览|规则|日程|排期|曲池|乐曲|段位与奖励|段位|奖励|榜单|排行榜|排名|人数|段位人数)?', text, re.I)
     if arena:
-        region, band, mode = arena.groups()
-        return '/查竞技场 ' + ' '.join(value for value in (region, band.strip(), '榜单' if mode == '排名' else mode) if value)
+        region, band, kind, mode = arena.groups()
+        command = '/查竞技场' if kind == '竞技场' else '/查激奏舞台'
+        if kind == '激奏舞台' and mode in {'榜单', '排行榜', '排名', '人数', '段位人数'}:
+            command = '/查激奏榜线'
+        return ' '.join(value for value in (command, region, band.strip(), '榜单' if mode == '排名' else mode) if value)
     return None
 
 

@@ -27,7 +27,7 @@ class InfoRow:
     rarity: int | None = None
     image_kind: Literal["square", "wide", "portrait"] = "square"
     group: str = ""
-    kind: Literal["row", "fact", "prose", "links", "card", "song", "schedule", "banner", "metric", "showcase", "standing", "bonus", "gallery", "recruitment", "bonus-summary"] = "row"
+    kind: Literal["row", "fact", "prose", "links", "card", "song", "schedule", "banner", "standing", "bonus", "gallery", "recruitment", "bonus-summary"] = "row"
     attribute_url: str = ""
     schedule: InfoSchedule | None = None
     display_title: str = ""
@@ -49,7 +49,7 @@ class InfoView:
     rows: tuple[InfoRow, ...] = ()
     footer: tuple[str, ...] = ()
     layout: Literal["list", "detail", "character", "directory", "facts", "activity-summary"] = "list"
-    presentation: Literal["", "activity", "gacha", "character", "arena", "player"] = ""
+    presentation: Literal["", "activity", "gacha", "character", "arena"] = ""
     visual_footer: tuple[str, ...] | None = None
     hero_kind: Literal['banner', 'event'] = 'banner'
     hero_logo_url: str = ''
@@ -67,8 +67,6 @@ class InfoAnswer:
     status: str = "success"
     views: tuple[InfoView, ...] = ()
     evidence_expires_at: float | None = None
-    captured_images: tuple[tuple[str, bytes], ...] = ()
-    original_image: bytes | None = None
     calendar_time_status: Literal["exact", "related", "unavailable"] | None = None
     calendar_time: CalendarTime | None = None
 

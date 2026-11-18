@@ -50,7 +50,7 @@ TERMINAL_CACHE_TTL_SECONDS = 300.0
 CACHE_CAPACITY = 128
 
 _DIRECT_COMMAND = re.compile(
-    r"^[/／]?(?:查竞技场|查玩家|查活动|查卡池|查角色|查曲|查谱面|查谱|查卡|查角色卡|查卡面|查留影卡面|查留影卡|查支援卡面|查SNAP卡面|查SNAP|SNAP|查支援卡|支援卡|song|chart|card|support)(?:\s+|$)", re.I,
+    r"^[/／]?(?:查竞技场|查活动|查卡池|查角色|查曲|查谱面|查谱|查卡|查角色卡|查卡面|查留影卡面|查留影卡|查支援卡面|查SNAP卡面|查SNAP|SNAP|查支援卡|支援卡|song|chart|card|support)(?:\s+|$)", re.I,
 )
 _UNSUPPORTED_TERMS = re.compile(
     r"推荐|最强|排行|攻略|预测|档线|代练|代肝|账号|抽卡建议|编成|怎么打|如何打|"
@@ -336,6 +336,17 @@ class QueryAgent:
             return self._finish_terminal(state, OutcomeCode.UNSUPPORTED, UNSUPPORTED,
                                          cache=False)
 
+        # The Arena cutoff grammar must run before the generic event-cutoff marker.
+        from .on_query import public_information_command
+        public_command = public_information_command(question)
+        if public_command is not None:
+            selected = resolve_command(public_command, repository)
+            text = handle_command(public_command, repository, resolved=selected) or UNSUPPORTED
+            state.final_code = self._command_code(selected)
+            state.local_parsed = selected is not None and state.final_code != OutcomeCode.INVALID_ARGUMENTS
+            self._remember_state(question, state)
+            return AgentOutcome(text, selected, state)
+
         # Cutoffs are live source snapshots: bypass stale plan/terminal caches and AI quotas.
         from ..query.event_cutoff_query import parse_natural_cutoff
         cutoff = parse_natural_cutoff(question)
@@ -369,17 +380,6 @@ class QueryAgent:
             outcome = self._execute_spec(state, field, repository)
             self._remember_state(question, state)
             return outcome
-
-        from .on_query import public_information_command
-        public_command = (question if re.match(r'^[/／]?(?:查竞技场|查玩家)(?:\s|$)', question)
-                          else public_information_command(question))
-        if public_command is not None:
-            selected = resolve_command(public_command, repository)
-            text = handle_command(public_command, repository, resolved=selected) or UNSUPPORTED
-            state.final_code = self._command_code(selected)
-            state.local_parsed = selected is not None and state.final_code != OutcomeCode.INVALID_ARGUMENTS
-            self._remember_state(question, state)
-            return AgentOutcome(text, selected, state)
 
         cached = self._cache_get(question)
         if cached is not None and not (native and state.natural_mode == 'model'

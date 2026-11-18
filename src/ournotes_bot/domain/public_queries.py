@@ -1,7 +1,7 @@
 # L3
 # Input: Explicit public query arguments and captured JSON facts.
 # Output: Immutable requests and source snapshots; shared source/query failures.
-# Pos: Domain / public Arena and player queries.
+# Pos: Domain / public Arena queries.
 # Effects: None.
 from dataclasses import dataclass
 
@@ -20,14 +20,9 @@ class ArenaRequest:
     season: int | None = None
     first: int = 1
     last: int = 20
-
-
-@dataclass(frozen=True)
-class PlayerRequest:
-    profile_id: str
-    region: str = 'jp'
-    namecard: bool = False
-    page: int | None = None
+    positions: tuple[int, ...] = ()
+    numeric_only: bool = False
+    population_details: bool = False
 
 
 @dataclass(frozen=True)

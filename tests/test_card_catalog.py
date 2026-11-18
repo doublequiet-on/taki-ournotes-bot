@@ -57,6 +57,36 @@ class CardCatalogTests(unittest.TestCase):
         self.assertFalse(answer.error, answer.error)
         return [c.id for c in answer.cards]
 
+    def test_profile_card_links_follow_source_character_ids_through_direct_commands(self):
+        from test_info_queries import person
+
+        self.repo.characters = (person(1, '高松灯'), person(2, '高松灯'), person(3, '无卡角色'))
+        self.repo.metadata['info_catalog_available'] = {'characters': True}
+        first = replace(self.base, id=10, catalog={'character_ids': [1], 'character_links_complete': True})
+        second = replace(self.base, id=20, title='高松灯',
+                         catalog={'character_ids': [2], 'character_links_complete': False})
+        self.repo.cards = [first, second, second]
+        snap = replace(self.support, id=2, catalog={'character_ids': [1, 2], 'character_links_complete': True})
+        self.repo.support_cards = [snap, snap]
+        profile = resolve_command('/查角色 2', self.repo).info.views[0]
+        links = [row.command for row in profile.rows if row.kind == 'links']
+        self.assertEqual(links, ['/查卡 角色ID=2', '/查留影卡 角色ID=2'])
+        self.assertEqual([[card.id for card in resolve_command(link, self.repo).catalog.cards] for link in links],
+                         [[20], [2]])
+        for command, expected in (('/查卡 characterId=１/２ SSR', [10, 20]),
+                                  ('/查卡 角色ID=2 颜色=红', [20]),
+                                  ('/查留影卡 角色ID=1/2', [2])):
+            self.assertEqual([card.id for card in resolve_command(command, self.repo).catalog.cards], expected)
+        self.assertEqual(resolve_command('/查卡 角色ID=3', self.repo).status, 'empty')
+        self.assertEqual(resolve_command('/查卡 角色ID=99', self.repo).status, 'unknown_entity')
+        for value in ('-1', '不限', '0', '1/99'):
+            expected = 'unknown_entity' if value == '1/99' else 'invalid_arguments'
+            self.assertEqual(resolve_command(f'/查卡 角色ID={value}', self.repo).status, expected)
+        self.repo.cards.append(replace(first, id=11, catalog={}))
+        self.assertEqual(resolve_command(links[0], self.repo).status, 'data_unavailable')
+        self.repo.metadata.pop('info_catalog_available')
+        self.assertEqual(resolve_command(links[1], self.repo).status, 'data_unavailable')
+
     def test_birthday_rarity_is_member_only_and_named_bd(self):
         from ournotes_bot.query.card_catalog import rarity_name
         card = replace(self.base, id=64, rarity=20)

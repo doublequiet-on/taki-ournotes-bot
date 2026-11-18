@@ -19,16 +19,17 @@ class CardFilters:
     tags: tuple[str, ...] = ()
     title_ids: tuple[int, ...] = ()
     leader: tuple[str, ...] = ()
+    character_ids: tuple[int, ...] = ()
 
     def __post_init__(self):
         for key, values in self.conditions(include_empty=True):
-            expected = int if key in {"rarity", "type", "title_ids"} else str
+            expected = int if key in {"rarity", "type", "title_ids", "character_ids"} else str
             if not isinstance(values, tuple) or any(type(v) is not expected for v in values):
                 raise TypeError(f"{key} requires an immutable tuple of {expected.__name__}")
 
     def conditions(self, *, include_empty=False):
         """Enumerate only the declared dimensions; no arbitrary mapping keys."""
-        for key in ("rarity", "type", "character", "band", "live", "gekisou", "tags", "title_ids", "leader"):
+        for key in ("rarity", "type", "character", "band", "live", "gekisou", "tags", "title_ids", "leader", "character_ids"):
             values = getattr(self, key)
             if values or include_empty:
                 yield key, values

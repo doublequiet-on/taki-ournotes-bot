@@ -88,7 +88,6 @@ class AIEntityLexiconTests(unittest.TestCase):
                 self.assertEqual({card.band for card in card_matches(self.repo, nickname)}, {expected})
                 self.assertIn(expected, handle_command(f"/查曲 {nickname}", self.repo))
                 self.assertIn("角色卡列表", handle_command(f"/查卡 {nickname}", self.repo))
-                self.assertIn(expected, handle_command(f"/查缩写 {nickname}", self.repo))
                 with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
                     self.assertIn(expected, self.parser.answer(f"/问 {nickname}的歌有哪些", self.repo))
 
@@ -120,7 +119,6 @@ class AIEntityLexiconTests(unittest.TestCase):
                 self.assertIn("睦卡2", handle_command(f"/查卡 {term}", self.repo))
                 with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
                     self.assertIn("睦卡2", self.parser.answer(f"/问 {term}的卡有哪些", self.repo))
-        self.assertIn("墨缇丝 →", handle_command("/查缩写 墨缇丝", self.repo))
         with patch("ournotes_bot.application.replies.render_card_list", return_value=b"cards") as render:
             self.assertEqual(_image_reply("/查卡 墨缇丝", self.repo), b"cards")
             self.assertEqual([card.id for card in render.call_args.args[0]], expected)
@@ -138,7 +136,6 @@ class AIEntityLexiconTests(unittest.TestCase):
             with patch("ournotes_bot.query.entity_lexicon.ALIAS_FILE", alias_file):
                 self.assertEqual(song_matches(self.repo, "撞名"), [])
                 self.assertIn("没有找到", handle_command("/查曲 撞名", self.repo))
-                self.assertIn("多个对象", handle_command("/查缩写 撞名", self.repo))
                 self.assertIsNone(_image_reply("/查曲 撞名", self.repo))
                 self.assertEqual([song.id for song in song_matches(self.repo, "迷星叫")], [100001])
                 self.assertEqual([song.id for song in song_matches(self.repo, "100002")], [100002])
