@@ -33,7 +33,7 @@ class MenuLimitsTests(unittest.TestCase):
         self.assertEqual(
             {item["name"] for item in PANEL_ITEMS},
             {"查谱面", "查曲", "查榜线", "查卡", "查留影卡", "查", "聊", "数据状态", "帮助", "介绍",
-             "继续", "详情", "查活动", "查卡池", "查角色", "查竞技场", "查玩家"},
+             "继续", "详情", "查活动", "一图流", "查卡池", "查角色", "查竞技场", "查玩家"},
         )
         for item in PANEL_ITEMS:
             self.assertLessEqual(display_width(item["name"]), 14)

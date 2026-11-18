@@ -31,4 +31,4 @@ where = ["src"]
 "ournotes_bot.platforms.qq" = ["assets/card-947.jpg"]
 "ournotes_bot.rendering" = ["assets/*.ttf", "assets/*.txt"]
 
-"ournotes_bot.sources.haneoka" = ["visual_skill_contracts.json", "game_assets.json"]
+"ournotes_bot.sources.haneoka" = ["visual_skill_contracts.json", "game_assets.json", "activity_infographic_engine.cjs"]

@@ -71,6 +71,8 @@ tasks_recover 只重建配置允许且已退出／缺失的 catalog、traits 和
 
 events_check 使用配置的服务器与现有来源缓存；upstream_check 只读主资料的 JP/intl 身份，不发布资料。sample_once 仅在采样已配置时开放，与周期采样共用非阻塞锁、前台让位、发现退避和时钟隔离。结果分别统计实际获取路径、历史写入返回值和新增有效观测，不把缓存命中或重复记录算成新历史。
 
+`activity_infographic_rebuild` 是个人 Haneoka 实例的空参数操作。它与周期生成共用锁，按当前或最近已开场的日服活动重做 JPEG。后台每分钟检查活动，自动补齐最近一期已开场活动的缺图。结束时间修订时，后台先写入按新时间保存的 JPEG，再切换当前记录。`tasks_recover` 可以恢复一图流任务。图片和已核验的 Haneoka WASM 位于 `OURNOTES_RUNTIME_DATA_DIR/activity-infographic/`。配队用本机 Node，受管组合复用其 Node，独立运行从 PATH 查找或以 `OURNOTES_INFOGRAPHIC_NODE` 指定绝对路径。首次下载和二进制摘要绑定源码中的公开地址，下载失败由后台重试。
+
 网关 ops/controls、ops/controls/start、ops/controls/restore 采用全局 epoch/revision；群操作另需群 revision。maintenance 只暂停 queriesEnabled/notificationsEnabled，不取消已接纳任务或 ACK。local 只把选中群当前有效的 model 收紧为 local，原 off/local 保持不变；原继承值也保存供恢复，不设置自动恢复倒计时。
 
 独立审计先原子保存意图，再修改设置，最后回读确认并保存结果。操作 ID 重试复用原结果。活动恢复记录保留原字段，普通已完成审计只保留字段名、摘要和保存版本；会话使用随机标识，不保存管理员密码。记录不可写时禁止对应管理操作，业务与 ACK 不受影响。

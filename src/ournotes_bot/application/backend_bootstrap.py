@@ -12,6 +12,7 @@ from ..sources.cutoff_history import configure_sources
 from .backend import Backend, create_app
 from .data_owner import DataOwner
 from .runtime_tasks import RuntimeTasks
+from .activity_infographic import ActivityInfographic
 from .operations_sources import SourceOperations
 from .operations_runtime import RuntimeOperations
 from .backend_protocol import ProtocolError, require
@@ -73,7 +74,8 @@ def _build_backend(args, settings, *, query_only, assert_recovery_current=None):
         else:
             from .personal_runtime import configure_personal
             configure_personal(backend, args, settings)
-        backend.runtime_tasks = RuntimeTasks(repository, settings, backend.knowledge)
+        infographic = ActivityInfographic(repository) if not query_only and settings.data_source == 'haneoka' else None
+        backend.runtime_tasks = RuntimeTasks(repository, settings, backend.knowledge, infographic)
         SourceOperations(backend).register()
         RuntimeOperations(backend).register()
         backend.data_owner = owner

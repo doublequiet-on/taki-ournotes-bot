@@ -29,6 +29,7 @@ PANEL_ITEMS = [
     {"type": "command", "name": "查曲", "desc": "按颜色、激奏、乐队查歌曲"},
     {"type": "command", "name": "查榜线", "desc": "四服榜线趋势与排名表"},
     {"type": "command", "name": "查活动", "desc": "当前活动、日服列表与详情"},
+    {"type": "command", "name": "一图流", "desc": "日服当前或最近一期活动图"},
     {"type": "command", "name": "查卡池", "desc": "日服当前卡池、历史与UP卡"},
     {"type": "command", "name": "查角色", "desc": "人物档案、乐队目录与关联卡"},
     {"type": "command", "name": "查卡", "desc": "条件查列表，卡牌ID看详情"},

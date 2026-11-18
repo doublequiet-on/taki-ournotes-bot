@@ -37,10 +37,16 @@ class RuntimeOperations:
     def upstream(self, params):
         return {'code':'upstream_checked','source':'haneoka_catalog','versions':self.backend.repository.check_catalog_upstream()}
 
+    def rebuild_infographic(self, params):
+        result = self.backend.runtime_tasks.refresh_activity_infographic(rebuild=True)
+        return {**result, '_state': 'succeeded' if result['code'] == 'ready' else 'failed'}
+
     def register(self):
         jobs=self.backend.operations
         jobs.register('tasks_recover',self.prepare,self.recover)
         jobs.register('events_check',self.prepare,self.events)
+        if self.backend.runtime_tasks.infographic is not None:
+            jobs.register('activity_infographic_rebuild', self.prepare, self.rebuild_infographic)
         if self.backend.runtime_tasks.sampler is not None:
             jobs.register('sample_once',self.prepare,self.sample)
         if self.backend.repository.data_source=='haneoka':

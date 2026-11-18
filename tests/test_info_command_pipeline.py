@@ -2,6 +2,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -12,6 +13,108 @@ from ournotes_bot.platforms.qq.qq import (
 )
 from ournotes_bot.query.contracts.info import InfoAnswer, InfoRow, InfoSchedule, InfoView, info_text
 from ournotes_bot.query.continuation import parse_operation
+
+
+class InfographicPipelineTests(unittest.TestCase):
+    def test_cold_start_populates_the_latest_ended_activity(self):
+        from ournotes_bot.application.activity_infographic import ActivityInfographic
+
+        event = SimpleNamespace(event_id='5', title='测试活动', start_ms=100_000,
+                                end_ms=200_000, songs=(), metadata_version='fixture')
+        live = Mock(foreground_active=False)
+        live.event.return_value = event
+        repository = SimpleNamespace(event_cutoffs=live)
+        jpg = b'\xff\xd8data\xff\xd9'
+        render = Mock(return_value=jpg)
+        source = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            worker = ActivityInfographic(repository, directory=directory, source=source,
+                                         clock=lambda: 201, render=render)
+            self.assertEqual(worker.refresh()['code'], 'ready')
+            self.assertEqual(worker.store.lookup(now=201), ('日服 · 《测试活动》 · 已结束', jpg, 'success'))
+            restarted = ActivityInfographic(repository, directory=directory, source=source,
+                                            clock=lambda: 202, render=render)
+            self.assertEqual(restarted.refresh()['code'], 'cached')
+            render.assert_called_once()
+
+    def test_schedule_correction_retries_until_the_new_image_and_period_are_published(self):
+        from ournotes_bot.application.activity_infographic import ActivityInfographic
+
+        event = SimpleNamespace(event_id='5', title='测试活动', start_ms=100_000,
+                                end_ms=200_000, songs=(), metadata_version='fixture')
+        live = Mock(foreground_active=False)
+        live.event.return_value = event
+        repository = SimpleNamespace(event_cutoffs=live)
+        original = b'\xff\xd8original\xff\xd9'
+        corrected = b'\xff\xd8corrected\xff\xd9'
+        render = Mock(return_value=original)
+        with tempfile.TemporaryDirectory() as directory:
+            worker = ActivityInfographic(repository, directory=directory, source=Mock(),
+                                         clock=lambda: 150, render=render)
+            self.assertEqual(worker.refresh()['code'], 'ready')
+            old_period = worker.store.period()
+            event.end_ms = 300_000
+            render.return_value = corrected
+            with patch.object(worker.store, 'publish', side_effect=OSError('image write failed')):
+                with self.assertRaises(OSError):
+                    worker.refresh()
+            self.assertEqual(worker.store.period(), old_period)
+            self.assertEqual(worker.store.lookup(now=250), ('日服 · 《测试活动》 · 已结束', original, 'success'))
+
+            with patch.object(worker.store, 'observe', side_effect=OSError('manifest write failed')):
+                with self.assertRaises(OSError):
+                    worker.refresh()
+            self.assertEqual(worker.store.period(), old_period)
+            self.assertEqual(worker.store.lookup(now=250)[1], original)
+            self.assertEqual(worker.refresh()['code'], 'ready')
+            self.assertEqual(worker.store.lookup(now=250), ('日服 · 《测试活动》 · 进行中', corrected, 'success'))
+            self.assertEqual(worker.refresh()['code'], 'cached')
+
+    def test_background_retry_stores_once_and_command_reads_the_saved_jpeg(self):
+        from ournotes_bot.application.activity_infographic import ActivityInfographic
+        from ournotes_bot.application.replies import prepare_reply, recognizes_message
+        from ournotes_bot.sources.errors import ChartDataError
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+                'os.environ', {'OURNOTES_RUNTIME_DATA_DIR': directory}):
+            now = round(time.time() * 1000)
+            event = SimpleNamespace(event_id='5', title='测试活动', start_ms=now-60_000,
+                                    end_ms=now+60_000, songs=(), metadata_version='fixture')
+            live = Mock(foreground_active=False)
+            live.event.return_value = event
+            repository = SimpleNamespace(event_cutoffs=live)
+            data = SimpleNamespace(event={})
+            source = Mock()
+            source.capture.side_effect = [ChartDataError('pending rewards'), data]
+            jpg = b'\xff\xd8data\xff\xd9'
+            render = Mock(return_value=jpg)
+            worker = ActivityInfographic(repository, directory=directory, source=source, render=render)
+            self.assertTrue(recognizes_message('/一图流'))
+            with self.assertRaises(ChartDataError):
+                worker.refresh()
+            pending = prepare_reply('/一图流', None, None)
+            self.assertEqual(pending.business_status, 'pending')
+            self.assertEqual(worker.refresh()['code'], 'ready')
+            self.assertEqual(worker.refresh()['code'], 'cached')
+            self.assertEqual(source.capture.call_count, 2)
+            self.assertEqual(prepare_reply('／一图流', None, None).image, jpg)
+            self.assertEqual(prepare_reply('/一图流 jp', None, None).business_status, 'invalid_arguments')
+            self.assertEqual(source.capture.call_count, 2)
+            self.assertEqual(worker.store.lookup(now=(now+61_000)/1000)[0], '日服 · 《测试活动》 · 已结束')
+            render.assert_called_once()
+
+            restarted = ActivityInfographic(repository, directory=directory, source=source, render=render)
+            self.assertEqual(restarted.refresh()['code'], 'cached')
+            source.capture.side_effect = ChartDataError('rebuild failed')
+            with self.assertRaises(ChartDataError):
+                restarted.refresh(rebuild=True)
+            self.assertEqual(prepare_reply('/一图流', None, None).image, jpg)
+
+            live.event.return_value = SimpleNamespace(**{**vars(event), 'event_id': '6', 'start_ms': now-1000})
+            with self.assertRaises(ChartDataError):
+                restarted.refresh()
+            self.assertIsNone(prepare_reply('/一图流', None, None).image)
+            self.assertEqual(prepare_reply('/一图流', None, None).business_status, 'pending')
 
 
 class InfoCommandPipelineTests(unittest.TestCase):

@@ -68,3 +68,7 @@ Noto Sans SC 与 Roboto 字体以 SIL Open Font License 1.1 分发，许可证�
 ## 可选本地知识嵌入
 
 包 2B 可选使用 [BAAI/bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)（MIT）及 [Xenova 的 ONNX 导出](https://huggingface.co/Xenova/bge-small-zh-v1.5/tree/fcecc3c5fef6becfa2b2bdda15c1c938857be534)。权重不随 Taki 分发，运行时不下载；部署者需保存模型原许可证。固定版本、文件哈希、CPU 资源与可选运行依赖见 [知识库说明](docs/QUERY_CHAT_PACKAGE2B.md#本地语义模型)。
+
+## 活动挑战曲配队引擎
+
+一图流以独立 Node 进程调用 [Haneoka 配队引擎](https://github.com/haneoka-gakuen/ournotes-team-builder)（AGPL-3.0）。WASM 由 Haneoka 网站发布，运行时按固定 SHA-256 下载并单独缓存。
