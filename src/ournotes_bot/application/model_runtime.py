@@ -546,12 +546,15 @@ class ModelRuntime:
             body=request_body(profile,messages,tools)
         if (not light and work.proactive is not None and web is None and service_policy is None
                 and billing_request_id is None and not getattr(work,'proactive_generation',False) and profile.wire_profile=='openai-responses-v1'):
-            body['text']={'format':self.agent.proactive.response_format()}
+            body['text']={'format':self.agent.proactive.response_format(lookup=
+                self.agent.proactive.uses_public_lookup(work.request.conversation_id, getattr(work.proactive,'evidence_route','')))}
         action_budget=()
         if web is not None:
             require(profile.wire_profile=='openai-responses-v1' and not tools,'chat_capability_unverified')
-            body.update(tools=[{'type':'web_search','search_context_size':'low'}],max_tool_calls=web.max_calls)
-            action_budget=(('web_search',web.max_calls,web.unit_cost_micro),)
+            web_calls = 1 if self.agent.proactive.uses_public_lookup(
+                work.request.conversation_id, getattr(work.proactive, 'evidence_route', '')) else web.max_calls
+            body.update(tools=[{'type':'web_search','search_context_size':'low'}],max_tool_calls=web_calls)
+            action_budget=(('web_search',web_calls,web.unit_cost_micro),)
         # Verified native wires support required tool choice; no fallback/retry.
         if require_tool and tools and (profile.provider=='deepseek' and profile.reasoning_effort in (None,'none') or profile.wire_profile=='openai-responses-v1'):
             body['tool_choice']='required'
@@ -618,8 +621,8 @@ class ModelRuntime:
             actions=result.provider_actions or ((ProviderAction('web_search',None),) if web is not None else ())
             self.usage.settle(attempt,result.usage,result.error_code,actions=actions)
             if result.status=='ok':
-                require(type(result.native_calls) is int and 0<=result.native_calls<=(web.max_calls if web else 0)
-                        and all(action.count==0 or web is not None and action.count is not None and action.count<=web.max_calls
+                require(type(result.native_calls) is int and 0<=result.native_calls<=(web_calls if web else 0)
+                        and all(action.count==0 or web is not None and action.count is not None and action.count<=web_calls
                                 for action in result.provider_actions),'provider_action_budget_exceeded')
             # Settle the external charge first; revoked/deleted inputs cannot
             # authorize saving the returned visible text in the audit log.

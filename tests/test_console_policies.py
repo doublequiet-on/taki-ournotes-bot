@@ -8040,6 +8040,93 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.services.policy.return_value=self.policy
         self.agent.proactive.lightweight_groups=frozenset({'g1'})
 
+    async def test_public_game_lookup_prefers_reviewed_local_answer(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        knowledge,_=self.install_lightweight_score_evidence()
+        self.client.request.side_effect=[
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='技能倍率',clarification=''))),
+            self.result('先看技能等级。')]
+        value=self.observation('这个游戏的技能倍率怎么算？')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'public_lookup')
+        self.assertTrue(plan['send_allowed'],plan)
+        self.assertEqual(len(attempts),2)
+        knowledge.retrieve.assert_called_once()
+
+    async def test_public_game_lookup_searches_once_after_local_miss(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ProviderAction
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.agent.proactive.owners()[1].web=Mock(return_value=WebCapability(2,10000,'fixture'))
+        self.backend.knowledge=None
+        responses=iter([
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='游戏 技能倍率',clarification=''))),
+            replace(self.result('按技能等级取值'),citations=({'url':'https://example.org/skill','title':'技能'},),
+                    provider_actions=(ProviderAction('web_search',1),),native_calls=1),
+            self.result('倍率按技能等级取值[1]，先看当前等级。')])
+        call_limits=[]
+        async def respond(profile,body,**kwargs):
+            call_limits.append(body.get('max_tool_calls'))
+            return next(responses)
+        self.client.request.side_effect=respond
+        value=self.observation('这个游戏的技能倍率怎么算？')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'public_lookup')
+        self.assertTrue(plan['send_allowed'],plan)
+        self.assertEqual(len(attempts),3)
+        self.assertEqual(call_limits,[None,1,None],str(plan['parts']))
+        self.assertIn('[出处](https://example.org/skill)，先看当前等级',plan['parts'][0]['text'])
+
+    async def test_public_game_lookup_clarifies_missing_card_without_search(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        knowledge,_=self.install_lightweight_score_evidence()
+        self.client.request.return_value=self.result(json.dumps(dict(
+            participation='reply',text='',delay_seconds=None,public_query='',clarification='你说的是哪张卡？')))
+        value=self.observation('这张卡的技能怎么触发？')
+        self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertIn('哪张卡',plan['parts'][0]['text'])
+        self.assertEqual(len(attempts),1)
+        knowledge.retrieve.assert_not_called()
+
+    async def test_public_game_lookup_stops_before_search_when_answered(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        knowledge,_=self.install_lightweight_score_evidence()
+        self.client.request.return_value=self.result(json.dumps(dict(
+            participation='skip',text='',delay_seconds=None,public_query='',clarification='')))
+        value=self.observation('原来游戏的技能倍率是这么算的？懂了')
+        self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(len(attempts),1)
+        knowledge.retrieve.assert_not_called()
+
+    async def test_public_game_lookup_skips_when_specialized_and_web_sources_missing(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ProviderAction
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.agent.proactive.owners()[1].web=Mock(return_value=WebCapability(1,10000,'fixture'))
+        self.backend.knowledge=None
+        self.client.request.side_effect=[
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='Our Notes JUST 激奏 排名',clarification=''))),
+            replace(self.result('没有查到'),provider_actions=(ProviderAction('web_search',1),),native_calls=1)]
+        value=self.observation('激奏 JUST 区间怎么计分')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'just_score')
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(len(attempts),2)
+
     def install_lightweight_score_evidence(self, scope=None):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope

@@ -25,7 +25,7 @@ from .chat_jobs import (
 from .proactive_chat import ProactiveController, ProactivePolicy, select_topic_context, topic_keys
 from .chat_followup import Followups
 from .persona import (contextual_just_evidence_route, explicit_evidence_route,
-                      lightweight_image_reference, lightweight_needs_evidence)
+                      lightweight_image_reference, lightweight_needs_evidence, public_lookup_candidate)
 from . import replies
 
 
@@ -128,7 +128,7 @@ class ProactiveChat:
         return value
 
     @staticmethod
-    def response_format(*, one_pass=False):
+    def response_format(*, one_pass=False, lookup=False):
         properties = {
             'participation': {'type': 'string', 'enum': ['reply', 'skip', 'defer']},
             'text': {'type': 'string'},
@@ -142,6 +142,9 @@ class ProactiveChat:
             )
         else:
             properties['text']['enum'] = ['']
+        if lookup:
+            properties['public_query']={'type':'string'}
+            properties['clarification']={'type':'string'}
         return {'type': 'json_schema', 'name': 'proactive_one_pass' if one_pass else 'proactive_participation',
                 'strict': True, 'schema': {'type': 'object', 'properties': properties,
                     'required': list(properties), 'additionalProperties': False}}
@@ -448,6 +451,10 @@ class ProactiveChat:
             self.observation_responses.popitem(last=False)
         return result
 
+    def uses_public_lookup(self, group_id, route):
+        return group_id in self.one_pass_groups and route in (
+            'public_lookup', 'just_window', 'just_score', 'just_card', 'activity_time', 'story_fact')
+
     def candidate(self,request):
         if self.agent.audit_failures:return None
         owner=self.continuation_owner(self.scope(request))
@@ -494,6 +501,9 @@ class ProactiveChat:
                         self.control_event(request,'lightweight_context_required')
                         return None
                     evidence_context_id = previous.message_id
+        if (lightweight and not evidence_route and request.conversation_id in self.one_pass_groups
+                and public_lookup_candidate(request.body)):
+            evidence_route = 'public_lookup'
         if lightweight and not evidence_route and lightweight_needs_evidence(request.body):
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
@@ -513,6 +523,10 @@ class ProactiveChat:
         else:
             minimum = proactive_minimum_cost_micro(profile)
             model_cost = maximum_cost_micro(profile) * self.agent.budget.model_calls
+        if self.uses_public_lookup(request.conversation_id, evidence_route):
+            web = self.owners()[1].web(snapshot)
+            if web and web.max_calls >= 1 and self.agent.budget.model_calls >= 3:
+                model_cost = math.ceil(maximum_cost_micro(profile) * min(4,self.agent.budget.model_calls) + web.unit_cost_micro)
         remaining=self.controller.remaining_cost(scope,
             evidence_reserve_micro=minimum if evidence_route else 0)
         if remaining is not None:model_cost=min(model_cost,remaining)
