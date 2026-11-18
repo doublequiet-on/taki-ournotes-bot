@@ -2,18 +2,19 @@
 # Input: Explicit region/current request or JP static event name/ID/history.
 # Output: Current/recent activity and static event facts shared by text and images.
 # Pos: Query / Deterministic activity information; see L2-2.md.
-# Effects: Current requests read event metadata only; no ranking, model or QQ calls.
+# Effects: Activity detail may read its independent total board; no model or QQ calls.
 import time
 import math
 from datetime import datetime, timezone, timedelta
 from dataclasses import replace
 
 from ..data import normalize
+from ..domain.query_cancellation import thread_cancel_event
 from .contracts.info import CalendarTime, InfoAnswer, InfoRow, InfoSchedule, InfoView
-from .event_cutoff_query import SERVER_ALIASES
+from .event_cutoff_query import NODES, SERVER_ALIASES
 from .info_query import (answer, available, card_rows, footer, named_matches,
                          list_view, period, schedule, state, text_value, unavailable)
-from ..sources.moenotes_events import SERVERS, SourceError, display_time, zone_label
+from ..sources.moenotes_events import EventSnapshot, SERVERS, SourceError, display_time, event_ranking_format, zone_label
 
 HELP = '/查活动 [jp/hk/kr/en]：当前／最近活动；/查活动 列表；/查活动 历史 [名称]；/查活动 ID或名称（日服）。'
 
@@ -128,6 +129,82 @@ def _related_rows(record, catalog, *, challenge_song_ids=(), include_songs=True)
     return tuple(rows)
 
 
+def _total_row(event, board, *, historical=False, unavailable=''):
+    command = f"/查榜线 {'hk' if event.server == 'tw' else event.server} 总榜"
+    if historical:
+        command = ''
+    if board is None or not any(board.score(rank) is not None for rank in NODES):
+        return InfoRow('挑战综合分数榜', (unavailable or '暂无可信的五档榜线快照。',), command=command)
+    values = tuple(f'T{rank}  {score:,}' if (score := board.score(rank)) is not None
+                   else f'T{rank}  暂无数据' for rank in NODES)
+    source = 'Haneoka · 官方快照' if board.source == 'haneoka' else board.source
+    stamp = display_time(board.fetched_ms, event.server)
+    status = '最后可读观测 · 非确认终榜' if historical else board.status
+    return InfoRow('挑战综合分数榜', (*values, f'{stamp} · {zone_label(event.server)}',
+                   f'{source} · {status}'), command=command)
+
+
+def _current_total_row(source, event, deadline):
+    if event_ranking_format(event).total_enabled is not True:
+        return None
+    totals = getattr(source, 'total_rankings', None)
+    if totals is None or not totals.connected:
+        return _total_row(event, None, unavailable='当前来源暂未接入综合榜。')
+    try:
+        board = totals.capture(event, deadline)
+        reason = board.status if board is not None else totals.unavailable_status(event)
+    except SourceError:
+        board, reason = None, '综合榜快照暂不可用。'
+    return _total_row(event, board, unavailable=reason)
+
+
+def _record_total_row(record, repository, now):
+    if ('挑战歌曲总榜' not in record.ranking_modes or record.start_at is None
+            or record.end_at is None or record.start_at > now):
+        return None
+    source = getattr(repository, 'event_cutoffs', None)
+    totals = getattr(source, 'total_rankings', None)
+    if totals is None:
+        return None
+    start, end = round(record.start_at * 1000), round(record.end_at * 1000)
+    with source.foreground():
+        deadline = source.deadline()
+        if record.end_at > now:
+            try:
+                event = source.event('jp', deadline)
+            except SourceError:
+                return None
+            if (event.event_id, event.start_ms, event.end_ms) == (str(record.id), start, end):
+                return _current_total_row(source, event, deadline)
+            return None
+
+        event = EventSnapshot('jp', str(record.id), record.title, 'end', start, end, (),
+                              source=totals.history.source, total_ranking_enabled=True)
+        stop = thread_cancel_event.get()
+
+        def should_stop():
+            return (stop is not None and stop.is_set()) or source.monotonic() >= deadline
+
+        try:
+            captured = next((candidate for candidate in totals.history.events('jp')
+                             if (candidate.event_id, candidate.start_ms, candidate.end_ms)
+                             == (event.event_id, start, end)), None)
+            if captured is not None:
+                board = totals.history.latest(captured, should_stop=should_stop)
+                if board is not None:
+                    return _total_row(captured, board, historical=True)
+        except SourceError:
+            pass  # A bad local history does not invalidate independent official evidence.
+        # A positive catalog declaration is required; "pending" does not prove a board exists.
+        if totals.history.source == 'haneoka' and totals.connected and not (stop and stop.is_set()):
+            try:
+                board = totals.archived(event, deadline)
+                return _total_row(event, board, historical=True)
+            except SourceError:
+                pass
+    return _total_row(event, None, historical=True, unavailable='往期综合榜快照暂不可用。')
+
+
 def _static(query, repository, now, section=''):
     mode, term = 'search', query
     if query in {'列表', '全部'}:
@@ -158,6 +235,10 @@ def _static(query, repository, now, section=''):
         rows.extend(_related_rows(record, catalog))
         rows = (rows[:1] + list(detail_rows(record, section, f'/查活动 {record.id}')) if section else
                 rows[:1] + list(overview_rows(record, rows[1:], f'/查活动 {record.id}')))
+        if not section:
+            total_row = _record_total_row(record, repository, now)
+            if total_row is not None:
+                rows.insert(1, total_row)
         hero=(record.detail_image_url or record.image_url) if section else (record.image_url or record.detail_image_url)
         return answer((InfoView(record.title, '日服 · 活动详情', hero, tuple(rows), notes, 'detail' if section else 'activity-summary',
                                 presentation='activity',visual_footer=footer(catalog,diagnostics=False),
@@ -172,9 +253,13 @@ def _static(query, repository, now, section=''):
 
 def _current(server, repository, section=''):
     source = repository.event_cutoffs
+    total_row = None
     try:
         with source.foreground():
-            event = source.event(server, source.deadline())
+            deadline = source.deadline()
+            event = source.event(server, deadline)
+            if not section:
+                total_row = _current_total_row(source, event, deadline)
     except SourceError as exc:
         return InfoAnswer({'not_found': '当前没有可用活动资料。', 'pending': '活动资料尚未就绪，请稍后重试。',
                            'rate_limited': '来源限流，请稍后重试。'}.get(exc.code, '活动资料暂不可用，请稍后重试。'),
@@ -188,7 +273,7 @@ def _current(server, repository, section=''):
     for song in event.songs:
         # Only the current source response can establish this challenge identity.
         rows.append(InfoRow(song.title, (f'歌曲 ID {song.music_id} · 挑战 ID {song.challenge_id}',),
-                            song.jacket, f"/查榜线 {'hk' if server == 'tw' else server} 歌曲ID={song.music_id}", '挑战歌曲',kind='song'))
+                            song.jacket, '', '挑战歌曲', kind='song'))
     if not event.songs:
         rows.append(InfoRow('挑战歌曲', ('当前资料没有挑战歌曲榜。',)))
     notes = list(event.notes)
@@ -225,7 +310,9 @@ def _current(server, repository, section=''):
     if not matched:
         missing = InfoRow(section or '补充资料', ('尚未取得与该服本期活动身份及时间一致的详情资料。',))
         rows = rows[:1] + [missing] if section else rows + [missing]
-    notes.append('资料来源：' + ('Haneoka（实时观测经 MoeNotes tracker）' if event.source == 'haneoka' else event.source))
+    if total_row is not None:
+        rows.insert(1, total_row)
+    notes.append('资料来源：' + ('Haneoka Game Records' if event.source == 'haneoka' else event.source))
     visual_notes.append(notes[-1])
     return answer((InfoView(event.title, subtitle=f'{SERVERS[server][0]} · 当前／最近活动', hero_url=hero,
                             rows=tuple(rows), footer=tuple(notes), layout='detail' if section else 'activity-summary',presentation='activity',

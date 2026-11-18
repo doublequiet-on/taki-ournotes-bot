@@ -23,6 +23,8 @@ class TotalRankingSnapshot:
     notes: tuple[str, ...] = ()
     observed_scores: tuple[int | None, ...] | None = None
     http_date_ms: int | None = None
+    snapshot_id: str | None = None
+    source_read_ms: int | None = None
     player_details: tuple[dict | None, ...] = ()
 
     def score(self, rank):

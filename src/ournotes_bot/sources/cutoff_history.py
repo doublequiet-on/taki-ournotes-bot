@@ -920,13 +920,15 @@ def configure_sources(repository, settings):
     haneoka = ProviderHistory(haneoka)
     source.history = SourceHistory(legacy, formal, active=settings.cutoff_source, haneoka=haneoka)
     source.score_display_limit = settings.cutoff_score_display_limit
-    from .total_rankings import TotalRankingHistory, TotalRankingRepository, fetch_moenotes_total
+    from .total_rankings import TotalRankingHistory, TotalRankingRepository, fetch_haneoka_total, fetch_moenotes_total
     total_file = ('tracker-total-rankings-v2.sqlite3' if settings.cutoff_source == 'tracker'
-                  else f'{settings.cutoff_source}-total-rankings-v1.sqlite3')
-    total_fetch = (lambda event, deadline: fetch_moenotes_total(source, event, deadline)) if settings.cutoff_source == 'tracker' else None
+                  else 'haneoka-total-rankings-v2.sqlite3' if settings.cutoff_source == 'haneoka'
+                  else 'open-total-rankings-v1.sqlite3')
+    total_adapter = {'tracker': fetch_moenotes_total, 'haneoka': fetch_haneoka_total}.get(settings.cutoff_source)
+    total_fetch = (lambda event, deadline: total_adapter(source, event, deadline)) if total_adapter else None
     source.total_rankings = TotalRankingRepository(TotalRankingHistory(
         settings.cache_file.with_name(total_file),
         settings.cutoff_source, enabled=settings.cutoff_history_enabled,
         min_free_mb=settings.cutoff_history_min_free_mb,
-        compressed=settings.cutoff_source == 'tracker'), fetch=total_fetch,
+        compressed=settings.cutoff_source in {'tracker', 'haneoka'}), fetch=total_fetch,
         clock=source.clock if total_fetch is not None else time.time)

@@ -388,12 +388,57 @@ class InformationQueryTests(unittest.TestCase):
         repo = SimpleNamespace(event_cutoffs=source, capture_catalog=lambda: catalog(activities=(static,), cards=(card(7),)))
         return repo, source
 
+    def test_current_activity_picture_includes_total_only_for_supported_event(self):
+        from dataclasses import replace
+        from unittest.mock import Mock
+        from ournotes_bot.domain.total_rankings import TotalRankingSnapshot
+        from ournotes_bot.rendering.info_layout import render_info
+        repo, source = self._current_repository(activity(1, '活动'))
+        source.total_rankings = Mock(connected=True)
+        source.total_rankings.capture.return_value = TotalRankingSnapshot(
+            'key', 'haneoka', (9007199254740993, 0, 30), NOW * 1000, NOW * 1000)
+        self.assertNotIn('挑战综合分数榜', execute_activity('', repo).text)
+        source.total_rankings.capture.assert_not_called()
+        source.value = replace(source.value, total_ranking_enabled=True)
+        answer = execute_activity('', repo)
+        source.total_rankings.capture.assert_called_once_with(source.value, 0)
+        self.assertIn('T1  9,007,199,254,740,993', answer.text)
+        self.assertIn('T2  0', answer.text)
+        self.assertIn('T100  暂无数据', answer.text)
+        pages = render_info(answer)
+        self.assertTrue(any(p.image and '挑战综合分数榜' in p.text for p in pages))
+        self.assertNotIn('挑战综合分数榜', execute_activity('加成', repo).text)
+        source.total_rankings.capture.assert_called_once()
+
+    def test_ended_activity_uses_confirmed_archived_total_and_omits_older_events(self):
+        from unittest.mock import Mock
+        from ournotes_bot.domain.total_rankings import TotalRankingSnapshot
+        total = activity(4, '已结束有总榜', start=NOW - 2000, end=NOW - 100, ranking_modes=('挑战歌曲总榜',))
+        old = activity(1, '旧榜制', start=NOW - 4000, end=NOW - 3000)
+        source = CurrentSource(None)
+        source.total_rankings = Mock(connected=True)
+        source.total_rankings.history.source = 'haneoka'
+        source.total_rankings.history.events.return_value = ()
+        source.total_rankings.archived.return_value = TotalRankingSnapshot(
+            'key', 'haneoka', (1234,), (NOW - 10) * 1000, NOW * 1000, stale=True)
+        repo = SimpleNamespace(event_cutoffs=source, capture_catalog=lambda: catalog(activities=(old, total)))
+        self.assertNotIn('挑战综合分数榜', execute_activity('1', repo, now=NOW).text)
+        source.total_rankings.archived.assert_not_called()
+        result = execute_activity('4', repo, now=NOW)
+        self.assertIn('T1  1,234', result.text)
+        self.assertIn('最后可读观测', result.text)
+        self.assertNotIn('/查榜线', result.text)
+        event, deadline = source.total_rankings.archived.call_args.args
+        self.assertEqual((event.event_id, event.end_ms, deadline), ('4', (NOW - 100) * 1000, 0))
+        self.assertEqual(source.calls, [])
+
     def test_current_activity_same_id_and_dates_can_attach_static_cards(self):
         record = activity(1, '静态标题', bonus_cards=(CardRef(2, 7),), available_relations=frozenset({'bonus_cards'}))
         repo, source = self._current_repository(record)
         result = execute_activity('', repo)
         self.assertEqual(source.calls, ['jp'])
-        self.assertIn('/查榜线 jp 歌曲ID=101', result.text)
+        self.assertIn('歌曲 ID 101', result.text)
+        self.assertNotIn('歌曲ID=', result.text)
         self.assertIn('/查卡 7', result.text)
         self.assert_same_text(result)
 
@@ -402,7 +447,8 @@ class InformationQueryTests(unittest.TestCase):
         repo, _ = self._current_repository(record)
         result = execute_activity('', repo)
         self.assertEqual(result.text.count('歌曲 ID 101'), 1)
-        self.assertIn('/查榜线 jp 歌曲ID=101', result.text)
+        self.assertIn('歌曲 ID 101', result.text)
+        self.assertNotIn('歌曲ID=', result.text)
         self.assertNotIn('/查曲 101', result.text)
         self.assertIn('/查曲 102', result.text)
         self.assert_same_text(result)

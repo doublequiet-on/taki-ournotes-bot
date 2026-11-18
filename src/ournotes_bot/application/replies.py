@@ -64,7 +64,8 @@ def command_kind(content: str) -> str:
         return 'continuation'
     head = content.split(None, 1)[0].lstrip('/').casefold()
     return {'帮助': 'help', 'help': 'help', '查卡': 'card', '查曲': 'song',
-            '查谱面': 'chart', '查榜线': 'cutoff', '查活动': 'event'}.get(head, 'other')
+            '查谱面': 'chart', '查榜线': 'cutoff', '榜线': 'cutoff', '查榜線': 'cutoff', '榜線': 'cutoff',
+            '查活动': 'event'}.get(head, 'other')
 
 
 def recognizes_message(content: str) -> bool:

@@ -198,7 +198,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
     def _get(self, url, deadline):
         parts = urlsplit(url)
         if (parts.scheme != "https" or parts.netloc != "haneoka.org" or parts.query or parts.fragment
-                or not re.fullmatch(r"/api/v1/game/records/(jp|tw|kr|en)/events/(?:current|[1-9][0-9]{0,18}/challenges/[1-9][0-9]{0,18}/ranking)", parts.path)):
+                or not re.fullmatch(r"/api/v1/game/records/(jp|tw|kr|en)/events/(?:current|[1-9][0-9]{0,18}/(?:challenges/[1-9][0-9]{0,18}/ranking|total/latest))", parts.path)):
             raise SourceError("invalid_url")
         raw, headers = super()._get(url, deadline)
         if len(raw) > MAX_BYTES:

@@ -17,7 +17,7 @@
 | 活动 | `/查活动`、`event`、`イベント` | 当前/历史/列表/详情固定口语和明确命令转交 | 未注册 | `query/activity_query.py`、`test_info_queries.py` |
 | 卡池 | `/查卡池` | 当前/历史/详情固定口语和中文命令转交；英文 `gacha` 仍非入口 | 未注册 | `query/gacha_query.py`、`test_info_command_pipeline.py` |
 | 人物 | `/查角色` | 人物资料/生日/乐队成员固定口语和明确命令转交 | 未注册 | `query/character_query.py`、`test_info_queries.py` |
-| 歌曲榜线 | `/查榜线`、`/榜线` | `parse_natural_cutoff`，含服别/活动/歌曲/排名 | 保持本地，不调用模型 | `query/event_cutoff_query.py`、`test_cutoff_query_v2.py`、`test_cutoff_archive.py` |
+| 歌曲榜线 | `/查榜线`、`/榜线` | `parse_natural_cutoff`，含服别/活动/榜单类型/排名 | 保持本地，不调用模型 | `query/event_cutoff_query.py`、`test_cutoff_query_v2.py`、`test_cutoff_archive.py` |
 | 短答/数量 | 相应命令显示资料；短答入口是 `/问` | `parse_field_question` | 无 `field` 模型参数 | `query/field_query.py`、`test_field_queries.py` |
 | 别名 | `/查缩写` | 实体解析使用同一词库；不等于反查别名功能 | 只允许已核实对象 | `query/entity_lexicon.py`、`test_ai_lexicon.py` |
 | 续查 | `/继续`、选择和详情语法 | 平台持有已发送上下文；脱离上下文时代理拒绝 | 不开放自由修改条件 | `query/continuation.py`、`test_continuation.py` |
@@ -94,7 +94,7 @@
 | `mode/target_rank/range_bounds/ranks` | 不填为五档 1/2/3/10/100 趋势；`50` 为 40～60 附近排名；`20-40` 包含两端；`50-50` 单排名；离散用 `T1 T10 T37`，最多 5 个不同排名 | 是 / 是 / 固定排名升序 |
 | `numeric_only` | 默认 false；`仅数值`改投影，不改变选择 | 是 / 否 / 否 |
 
-排名只接受 1～100 整数；附近范围截断至边界；反向区间拒绝。`/查榜线 hk id1 歌曲ID=100001 20-40` 中三类数字不得混淆。玩家分数、数字 ID 和用户名来自同一行；缺玩家 ID/缺名次不能虚构。自然语言走 `parse_natural_cutoff`，不消耗模型额度。现有趋势、玩家记录及缺资料语义见 [榜线专题](EVENT_CUTOFFS.md)、[历史说明](CUTOFF_HISTORY.md) 和 `test_cutoff_player_ids.py`。
+排名只接受 1～100 整数；附近范围截断至边界；反向区间拒绝。`/查榜线 hk id1 总榜 20-40` 中活动 ID 和排名保持独立。玩家分数、数字 ID 和用户名来自同一行；缺玩家 ID/缺名次不能虚构。自然语言走 `parse_natural_cutoff`，不消耗模型额度。现有趋势、玩家记录及缺资料语义见 [榜线专题](EVENT_CUTOFFS.md)、[历史说明](CUTOFF_HISTORY.md) 和 `test_cutoff_player_ids.py`。
 
 ## 字段、数量、别名与续查
 

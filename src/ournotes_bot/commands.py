@@ -33,9 +33,9 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 如 /查曲 MyGO just 或 /查曲 激奏 just。just 表示包含，纯JUST 表示全段同类，混合 表示多种类型，JUST/JUST/COMBO 按顺序匹配。类型大小写均可。
 /查谱面 歌名或ID [难度] [镜像／反转] [5/6.5/8/5/5]：歌名或 ID 在前，参数顺序不限；100001 可简写为 1
-/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看趋势，有排名看表。50查40～60，20-40查区间，50-50查一名，1-100全榜；id1查往期本地末次观测，非确认终榜，裸数仍为排名
-Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
-/查活动 [jp/hk/kr/en]：当前／最近活动详情；/查活动 列表、/查活动 ID或名称 查询日服收录资料
+/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看趋势，有排名看表。50查40～60，20-40查区间，50-50查一名，1-100全榜；id1查往期本地末次观测，非确认终榜，裸数仍为排名
+单曲查全部课题曲，总榜查独立综合分数榜；T50也查附近，多T排名最多五个
+/查活动 [jp/hk/kr/en]：当前／最近活动详情，有总榜时显示五档；/查活动 列表、/查活动 ID或名称 查询日服收录资料
 /查卡池 [ID或名称]：日服当前卡池与UP卡；/查卡池 历史 查看已结束卡池
 /查角色 [姓名/昵称/ID/乐队]：人物档案、乐队目录与关联卡；无参数查看角色目录
 榜线当前排名同时显示分数、数字ID与用户名；缺失会标注，历史曲线仅记录分数。
@@ -152,7 +152,7 @@ COMMAND_HELPS = {
 }
 
 ALIASES = {
-    "查榜线": "event_cutoff", "榜线": "event_cutoff",
+    "查榜线": "event_cutoff", "榜线": "event_cutoff", "查榜線": "event_cutoff", "榜線": "event_cutoff",
     "查曲": "songs", "song": "songs", "songs": "songs", "曲": "songs", "楽曲": "songs",
     "查谱面": "chart", "查谱": "chart", "谱面": "chart", "chart": "chart", "譜面": "chart",
     "查卡": "cards", "查角色卡": "cards", "查卡面": "cards", "card": "cards", "cards": "cards", "カード": "cards",
@@ -664,9 +664,9 @@ def resolve_command(content: str, repository: SongRepository, *,
         from .query.activity_query import execute_activity
         answer = execute_activity(parts[1] if len(parts) > 1 else "", repository)
         return CommandResult(("activity", text, None), activity=answer)
-    if head in {"查榜线", "榜线"}:
+    if head in {"查榜线", "榜线", "查榜線", "榜線"}:
         answer = execute_cutoff(parse_cutoff(text), repository)
-        return CommandResult(("event_cutoff", answer.request.query, answer.request.rank), cutoff=answer)
+        return CommandResult(("event_cutoff", "", answer.request.rank), cutoff=answer)
     kind = ALIASES.get(head)
     if kind in {"cards", "support_cards"} or head in {"查角色卡", "查snap", "snap", "查支援卡面", "查snap卡面"}:
         support = kind == "support_cards" or head in {"查snap", "snap", "查支援卡面", "查snap卡面"}

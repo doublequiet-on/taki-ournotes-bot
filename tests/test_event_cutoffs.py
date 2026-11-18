@@ -116,11 +116,8 @@ class CutoffTests(unittest.TestCase):
         self.assertEqual(answer.request.server, "jp")
         self.assertEqual(answer.ranks, (1, 2, 3, 10, 100))
         self.assertEqual(len(answer.boards), 3)
-        one = self.ask("/查榜线 夢我夢中")
-        self.assertEqual(len(one.boards), 1)
-        self.assertEqual(one.ranks, answer.ranks)
         for value in (1, 37, 100):
-            precise = self.ask(f"/查榜线 夢我夢中 T{value}")
+            precise = self.ask(f"/查榜线 T{value}")
             self.assertEqual(precise.ranks, tuple(range(max(1, value-10), min(100, value+10)+1)))
             self.assertIn(str(self.http.players[value - 1]["score"]), precise.text)
         self.assertEqual(sum(url.endswith("/ranking") for url in self.http.calls), 3)
@@ -132,7 +129,6 @@ class CutoffTests(unittest.TestCase):
                     answer = self.ask(f"/查榜线 {server}{token}")
                     self.assertEqual(answer.status, "success")
                     self.assertEqual(answer.request.server, "tw" if server == "hk " else server.strip() or "jp")
-                    self.assertEqual(answer.request.query, "")
                     window = tuple(range(max(1,rank-10),min(100,rank+10)+1))
                     self.assertEqual(answer.ranks, window)
                     self.assertEqual([b.song.music_id for b in answer.boards], ["101", "102", "103"])
@@ -146,15 +142,15 @@ class CutoffTests(unittest.TestCase):
 
     def test_renamed_command_matches_natural_route_and_uses_new_help_label(self):
         from ournotes_bot.structured_query import QuerySpec
-        direct = self.ask("/查榜线 jp 夢我夢中 T37")
+        direct = self.ask("/查榜线 jp T37")
         self.assertEqual(direct.ranks, tuple(range(27,48)))
         self.assertEqual(direct.boards[0].song.music_id, "101")
-        for command in ("/查榜线 jp 夢我夢中 T37", "/榜线 jp 夢我夢中 T37"):
+        for command in ("/查榜线 jp T37", "/榜线 jp T37", "/查榜線 jp T37", "/榜線 jp T37"):
             natural = execute_cutoff(parse_natural_cutoff(command), self.repo)
             self.assertEqual(natural.text, direct.text)
             self.assertEqual(self.ask(command).text, direct.text)
         label = QuerySpec("event_cutoff", cutoff_request=direct.request).command_label()
-        self.assertEqual(label, '查榜线 jp 歌名="夢我夢中" 37')
+        self.assertEqual(label, '查榜线 jp 37')
         help_text = handle_command("/帮助", self.repo)
         self.assertIn("/查榜线 [jp/hk/kr/en]", help_text)
         self.assertNotIn("/榜线 ", help_text)
@@ -175,17 +171,17 @@ class CutoffTests(unittest.TestCase):
     def test_public_server_names_and_codes_preserve_source_identity(self):
         from ournotes_bot.structured_query import QuerySpec
         for code, name in (("jp", "日服"), ("hk", "国服"), ("kr", "韩服"), ("en", "英服")):
-            direct = self.ask(f"/查榜线 {code} 夢我夢中 T50")
+            direct = self.ask(f"/查榜线 {code} T50")
             self.assertTrue(direct.text.startswith(name + " · "))
-            natural = execute_cutoff(parse_natural_cutoff(name + "夢我夢中前50现在多少分"), self.repo)
+            natural = execute_cutoff(parse_natural_cutoff(name + "前50现在多少分"), self.repo)
             self.assertEqual(natural.text, direct.text)
             label = QuerySpec("event_cutoff", cutoff_request=direct.request).command_label()
-            self.assertEqual(label, f'查榜线 {code} 歌名="夢我夢中" 50')
+            self.assertEqual(label, f'查榜线 {code} 50')
             self.assertEqual(self.ask("/" + label).text, direct.text)
         calls = len(self.http.calls)
-        current = self.ask("/查榜线 hk 夢我夢中 T50")
+        current = self.ask("/查榜线 hk T50")
         for old in ("tw", "台服", "臺服", "國服"):
-            self.assertEqual(self.ask(f"/查榜线 {old} 夢我夢中 T50").text, current.text)
+            self.assertEqual(self.ask(f"/查榜线 {old} T50").text, current.text)
         self.assertEqual(len(self.http.calls), calls)
         self.assertTrue(any("/tw/events/" in url for url in self.http.calls))
         self.assertFalse(any("/hk/" in url for url in self.http.calls))
@@ -193,24 +189,11 @@ class CutoffTests(unittest.TestCase):
         for message in (self.ask("/查榜线 server=us").text, parse_natural_cutoff("美服榜线多少").error):
             self.assertIn("日服（jp）、国服（hk）、韩服（kr）、英服（en）", message)
 
-    def test_invalid_conditions_and_names(self):  # A05/A06
-        for rank in ("0", "-1", "1.5", "101", "T0", "T101"):
-            answer = self.ask("/查榜线 夢我夢中 " + rank)
-            self.assertEqual(answer.status, "invalid_arguments", rank)
-        for server in ("cn", "美服", "server=us"):
-            self.assertEqual(self.ask("/查榜线 " + server + " 夢我夢中").status, "invalid_arguments")
-        self.assertEqual(self.ask("/查榜线 不存在的歌").status, "unknown_entity")
-        self.assertEqual(self.ask("/查榜线 非本期歌曲").status, "empty")
-        for token in ("0", "-1", "1.5", "T0", "T101", "t101"):
+    def test_invalid_conditions_and_removed_song_selection(self):
+        for token in ("0", "-1", "1.5", "T0", "T101", "123", "cn", "美服",
+                      "server=us", "非本期歌曲", "歌曲1", "歌曲ID=101", '歌名="123"'):
             self.assertEqual(self.ask("/查榜线 " + token).status, "invalid_arguments", token)
-        self.assertEqual(self.ask("/查榜线 123").status, "invalid_arguments")
-        self.assertIsNone(self.ask('/查榜线 歌名="123"').request.rank)
-        self.assertEqual(self.ask("/查榜线 长歌名 37").boards[0].song.music_id, "102")
-        self.assertIsNone(self.ask("/查榜线 长歌名 37").request.rank)
-        self.assertEqual(self.ask("/查榜线 长歌名 37 T37").request.rank, 37)
-        with patch("ournotes_bot.query.entity_lexicon._aliases", return_value={"song": {"别名": "夢我夢中", "歧义": [101, 102]}}):
-            self.assertEqual(self.ask("/查榜线 别名").boards[0].song.music_id, "101")
-            self.assertEqual(self.ask("/查榜线 歧义").status, "ambiguous")
+        self.assertFalse(self.http.calls)
 
     def test_positions_holes_ties_invalid_scores_and_partial_board(self):  # A07/A08/A09
         self.http.players = [{"score": 123}, {"score": 123}, {}, None, {"score": 0}, {"score": True}, {"score": "7"}, {"score": -1}]
@@ -225,41 +208,9 @@ class CutoffTests(unittest.TestCase):
         self.assertNotIn('playerData', cached)
         self.assertNotIn('highScoreDeck', cached)
 
-    def test_current_song_matching_excludes_inactive_partial_and_alias_targets(self):  # A06
-        inactive = self.http.table_rows["jp"]["MasterText"][-1]
-        inactive.update(japanese="夢我夢中 外传 37", simplifiedChinese="夢我夢中 外传 37")
-        self.assertEqual(self.ask("/查榜线 夢我").boards[0].song.music_id, "101")
-        with patch("ournotes_bot.query.entity_lexicon._aliases", return_value={"song": {"共用别名": [101, 104]}}):
-            self.assertEqual(self.ask("/查榜线 共用别名").boards[0].song.music_id, "101")
-        outside = self.ask("/查榜线 夢我夢中 外传 37")
-        self.assertEqual(outside.status, "empty")
-        self.assertIsNone(outside.request.rank)
-        self.assertIn("不是本期", outside.text)
-        with patch("ournotes_bot.query.entity_lexicon._aliases", return_value={"song": {"真正歧义": [101, 102, 104]}}):
-            ambiguous = self.ask("/查榜线 真正歧义")
-        self.assertEqual(ambiguous.status, "ambiguous")
-        self.assertIn("长歌名 37", ambiguous.text)
-        self.assertNotIn("外传", ambiguous.text)
 
-    def test_ascii_titles_and_aliases_resolve_before_unknown_server(self):  # A05/A06/A19
-        active = self.http.table_rows["jp"]["MasterText"][1]
-        active.update(japanese="GO WAY GO", simplifiedChinese="GO WAY GO")
-        with patch("ournotes_bot.query.entity_lexicon._aliases", return_value={"song": {"my song": 101}}):
-            for title in ("GO WAY GO", "my song"):
-                for server in ("", "jp "):
-                    answer = self.ask(f"/查榜线 {server}{title} T37")
-                    self.assertEqual(answer.boards[0].song.music_id, "101")
-                    self.assertEqual(answer.ranks, tuple(range(27,48)))
-                request = parse_natural_cutoff(title + "100线多少")
-                answer = execute_cutoff(request, self.repo)
-                self.assertEqual(answer.boards[0].song.music_id, "101")
-                self.assertEqual(answer.ranks, tuple(range(90,101)))
-            before = len(self.http.calls)
-            unknown = execute_cutoff(parse_natural_cutoff("cn GO WAY GO100线多少"), self.repo)
-            self.assertEqual(unknown.status, "invalid_arguments")
-            self.assertIn("未知服务器", unknown.text)
-            self.assertEqual(len(self.http.calls), before)
-            self.assertEqual(self.ask("/查榜线 jp my missing song").status, "unknown_entity")
+
+
 
     def test_duplicate_activity_response_preserves_valid_cache_then_recovers(self):  # A16
         first = self.ask()
@@ -311,7 +262,7 @@ class CutoffTests(unittest.TestCase):
                 raw = encoded(body)
             return raw, headers
         self.source.transport = transport
-        answers = (self.ask(), self.ask("/查榜线 夢我夢中"), self.ask("/查榜线 夢我夢中 T37"))
+        answers = (self.ask(), self.ask("/查榜线 T37"), self.ask("/查榜线 37-37"))
         for answer in answers:
             self.assertEqual(answer.event.start_ms, 1790758800000)
             self.assertEqual(answer.event.end_ms, 1791460799000)
@@ -322,8 +273,10 @@ class CutoffTests(unittest.TestCase):
         before = len(self.http.calls)
         for answer in answers:
             pages = render_cutoff(answer)
-            self.assertEqual(len(pages), 1)
-            self.assertEqual(pages[0].text, answer.text)
+            self.assertTrue(pages)
+            for page in pages:
+                self.assertIn("本曲榜单有效开始：2026-10-01 18:00:00 UTC+09:00", page.text)
+                self.assertIn("本曲榜单有效结束：2026-10-06 20:59:59 UTC+09:00", page.text)
         self.assertEqual(len(self.http.calls), before)
 
     def test_missing_invalid_and_conflicted_song_periods_remain_unknown(self):  # A10/A12
@@ -460,9 +413,6 @@ class CutoffTests(unittest.TestCase):
         answer = self.ask()
         self.assertEqual(len(answer.boards), 3)
         self.assertIn("元数据暂不可用", answer.text)
-        self.assertEqual(self.ask("/查榜线 夢我夢中").status, "data_unavailable")
-        self.assertEqual(len(self.ask("/查榜线 歌曲ID=101").boards), 1)
-        self.assertEqual(self.ask('/查榜线 歌曲2').boards[0].song.music_id, '102')
 
     def test_bad_typed_cache_is_refetched_and_no_event_negatively_cached(self):
         self.source.cache_dir.mkdir()
@@ -552,9 +502,10 @@ class CutoffTests(unittest.TestCase):
         parser._agent._cache_put("现在榜线多少", CachedOutcome("terminal", OutcomeCode.UNSUPPORTED,
                                 message="old unsupported cache", expires_at=float("inf")))
         with patch.object(parser, "_request", side_effect=AssertionError("model called")) as model:
-            for question in ("现在榜线多少", "这期全部歌曲榜线", "夢我夢中100线多少", "国服夢我夢中前50现在多少分", "hk 夢我夢中前50现在多少分", "英服夢我夢中100线多少", "夢我夢中的档线是多少", "查榜线 jp 夢我夢中 T37", "查榜线 100", "查榜线 t100"):
+            for question in ("现在榜线多少", "这期全部歌曲榜线", "國服榜線多少", "国服前50现在多少分", "hk 前50现在多少分", "英服100线多少", "档线是多少", "查榜线 jp T37", "查榜线 100", "查榜线 t100"):
                 text = parser.answer("/问 " + question, self.repo)
                 self.assertIn("源采集", text, question)
+            self.assertIn("去掉歌名", parser.answer("/问 夢我夢中100线多少", self.repo))
             for question in ("预测夢我夢中100线多少", "推荐配队打榜线", "账号榜线"):
                 self.assertIn("不支持", parser.answer("/问 " + question, self.repo))
             self.http.current_id = "2"
@@ -573,7 +524,7 @@ class CutoffTests(unittest.TestCase):
 
     def test_three_visuals_full_numbers_names_and_multi_page_coverage(self):  # A12/A13/A22
         overview = self.ask()
-        for answer in (overview, self.ask("/查榜线 夢我夢中"), self.ask("/查榜线 夢我夢中 37"), self.ask("/查榜线 t100")):
+        for answer in (overview, self.ask("/查榜线 37-37"), self.ask("/查榜线 37"), self.ask("/查榜线 t100")):
             pages = render_cutoff(answer, preview_label="合成离线测试")
             self.assertEqual(len(pages), 1)
             self.assertEqual(pages[0].text, answer.text)
