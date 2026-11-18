@@ -254,7 +254,8 @@ class OpenEventCutoffRepository(EventCutoffRepository):
             entry = self._cached(key, 60, 600, load, deadline)
         except SourceError as exc:
             if self.history:
-                self.history.failure(event.server, event.event_id, song.challenge_id, exc.code)
+                with self._board_history_writer():
+                    self.history.failure(event.server, event.event_id, song.challenge_id, exc.code)
             labels = {"authentication": "正式来源未配置或认证失效", "permission": "正式来源权限不足",
                       "rate_limited": "正式来源限流，稍后重试", "minute_limit": "正式来源分钟窗口繁忙",
                       "not_found": "正式来源不支持或本曲暂无榜单", "identity_changed": "活动或挑战关联变化，请重新查询"}
@@ -264,19 +265,23 @@ class OpenEventCutoffRepository(EventCutoffRepository):
         board = self._open_snapshot(event, song, entry)
         if self.history:
             if entry.late:
-                self.history.record(event, self._open_snapshot(event, song, entry.late))
+                with self._board_history_writer():
+                    self.history.record(event, self._open_snapshot(event, song, entry.late))
             if entry.fallback:
-                self.history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
+                with self._board_history_writer():
+                    self.history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
             # Unknown source times/positions never become valid history points.
             if board.quality in {"valid", "outside_period", "clock_unknown"} and board.fetched_ms:
-                stored = self.history.record(event, board)
+                with self._board_history_writer():
+                    stored = self.history.record(event, board)
                 self._note_retrieval('history_result',stored)
                 if stored == "conflict":
                     board = replace(board, scores=(), quality="conflict", status="同一源时刻分数冲突，暂无可信当前值")
                 elif stored in {"storage_error", "busy", "low_disk", "disk_unavailable"}:
                     board = replace(board, notes=board.notes + ("历史保存暂停或失败；当前分数仍可查询。",))
             else:
-                self.history.failure(event.server, event.event_id, song.challenge_id, board.quality)
+                with self._board_history_writer():
+                    self.history.failure(event.server, event.event_id, song.challenge_id, board.quality)
         return board
 
     def _open_snapshot(self, event, song, entry):

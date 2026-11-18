@@ -1564,7 +1564,8 @@ class ChatAgent:
                     f'本轮核对的是留影 ID {just_card}，技能等级 {", ".join(just_levels)}。'
                     '分别说明资料核到的范围和持续时间。没有逐级范围就说明缺口，0 秒配置不能代替实际持续时间。')
         elif activity_questions and not local_activity:
-            activity_fields = '、'.join(label+'这期活动'+field+'时间' for label, field in activity_questions)
+            activity_fields = '、'.join(label+('下期活动开始时间' if field=='下期开始' else '这期活动'+field+'时间')
+                                       for label, field in activity_questions)
             messages[0]['content']+=(f'\n本轮查询{activity_fields}，先用 catalog_info。先答结论，再说查到的时间和时区。'
                                      '旧缓存用「旧缓存显示」标明。只知道最近一期或下期时，按工具区分。缺时间直接说不知道。')
             if queried_day:
@@ -2148,21 +2149,29 @@ class ChatAgent:
         catalog = repository.capture_catalog()
         items = []
         for label, field in questions:
+            period = '下期' if field == '下期开始' else '这期'
+            field = '开始' if period == '下期' else field
+            item = dict(region=label, field=field)
+            if period == '下期':
+                item['period'] = period
             server = {'日服':'jp', '国际服':'intl'}.get(label)
             if server is None:
-                items.append(dict(region=label,field=field,status='not_available',missing=field+'时间'))
+                items.append(dict(item,status='not_available',missing=field+'时间'))
                 continue
-            result = execute(self.tools['catalog_info'], {'kind':'event','query':''},
-                             label+'这期活动什么时候'+field, repository)
+            query = '下期' if period == '下期' else ''
+            result = execute(self.tools['catalog_info'], {'kind':'event','query':query},
+                             label+period+'活动什么时候'+field, repository)
             info = result.results[0].activity
             status = info.status
             if info.calendar_time_status == 'related':
                 status = 'partial'
             elif info.calendar_time_status != 'exact' and status == 'success':
                 status = 'not_available'
-            item = dict(region=label,server=server,field=field,status=status,text=result.texts[0])
+            item.update(server=server,status=status,text=result.texts[0])
             if status == 'success' and info.calendar_time is not None:
                 item['calendar_time'] = asdict(info.calendar_time)
+                if info.calendar_source_url:
+                    item['calendar_source_url'] = info.calendar_source_url
             if status != 'success':
                 item['missing'] = field+'时间'
             calendar = catalog.activity_calendars.get(server)
@@ -2184,18 +2193,24 @@ class ChatAgent:
     def calendar_reply(evidence, relative_end_day, queried_day):
         items = evidence.get('data', {}).get('items', ())
         if not any('calendar_time' in item for item in items):
+            if items and all(item.get('period') == '下期' for item in items):
+                return '我还不知道下期活动什么时候开始。', 'source_unavailable'
             return (f'我不知道{relative_end_day}是不是结束。' if relative_end_day else '我不知道。',
                     'source_unavailable')
         lines = []
         for item in items:
             value = item.get('calendar_time')
             if value is None:
-                lines.append(f"{item['region']}这期活动的{item['field']}时间我不知道。")
+                lines.append(f"{item['region']}{item.get('period', '这期')}活动的{item['field']}时间我不知道。")
                 continue
             local = datetime.fromtimestamp(value['at'], _CALENDAR_ZONE)
             when = local.strftime('%Y-%m-%d %H:%M:%S')
-            lead = '旧缓存显示，' if item.get('cache_state') == 'stale' else '是，' if local.date() == queried_day else ''
+            source_url = item.get('calendar_source_url')
+            stale = item.get('cache_state') == 'stale' and not source_url
+            lead = '旧缓存显示，' if stale else '是，' if local.date() == queried_day else ''
             lines.append(f"{lead}{item['region']}《{value['title']}》{when}（北京时间）{item['field']}。")
+            if source_url:
+                lines.append(f'[活动公告详情]({source_url})')
         return '\n'.join(lines), 'success'
 
     async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card='',mechanic_server=None,activity_questions=(),fact_windows=None,knowledge_cache=None,chapter_lookup=None):

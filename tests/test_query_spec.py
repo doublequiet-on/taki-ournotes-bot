@@ -226,14 +226,13 @@ class QuerySpecificationTests(unittest.TestCase):
             self.assertEqual(ambiguous.code.value, 'ambiguous')
 
     def test_cutoff_numbers_keep_their_namespaces(self):
-        direct = parse_cutoff('/查榜线 hk id1 歌曲ID=100001 20-40')
-        local = parse_natural_cutoff('查榜线 hk id1 歌曲ID=100001 20-40')
+        direct = parse_cutoff('/查榜线 hk id1 20-40')
+        local = parse_natural_cutoff('查榜线 hk id1 20-40')
         for request in (direct, local):
             self.assertIsNotNone(request)
             self.assertFalse(request.error)
             self.assertEqual(request.server, 'tw')
             self.assertEqual(request.event_id, '1')
-            self.assertEqual(request.song_id, '100001')
             self.assertEqual(request.mode, 'range')
             self.assertEqual(request.ranks, tuple(range(20, 41)))
         near = parse_cutoff('/查榜线 1')

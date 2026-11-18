@@ -180,18 +180,19 @@ def _aliases(path: Path | None = None) -> dict:
     return _load_aliases(path)[0]
 
 
+def information_alias_entries() -> tuple[tuple[str, str, str], ...]:
+    """Profile and band aliases with their source names still to be verified."""
+    entries = _aliases()
+    return tuple((kind, alias, target) for kind in ("character", "band")
+                 if isinstance(aliases := entries.get(kind, {}), dict)
+                 for alias, target in aliases.items() if isinstance(alias, str) and isinstance(target, str))
+
+
 def information_alias_targets(term: str) -> tuple[tuple[str, str], ...]:
     """Read exact profile/band aliases; callers verify targets against the roster."""
     needle = normalize(term)
-    entries = _aliases()
-    targets = []
-    for kind in ("character", "band"):
-        aliases = entries.get(kind, {})
-        if not isinstance(aliases, dict):
-            continue
-        targets.extend((kind, target) for alias, target in aliases.items()
-                       if isinstance(alias, str) and isinstance(target, str) and normalize(alias) == needle)
-    return tuple(targets)
+    return tuple((kind, target) for kind, alias, target in information_alias_entries()
+                 if normalize(alias) == needle)
 
 
 def information_character_aliases() -> tuple[tuple[str, str], ...]:

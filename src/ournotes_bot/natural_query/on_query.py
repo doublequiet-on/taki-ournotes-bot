@@ -91,9 +91,10 @@ def public_information_command(question):
         return text
     text = text.strip('？?。！!')
     text = re.sub(r'^(?:请|帮我|查询|查看|查一下)\s*', '', text)
-    event = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(?:本期|这期|当前)活动(?:的)?(加成|奖励|任务|卡池)', text, re.I)
+    event = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|國服|台服|臺服|韩服|韓服|英服|国际服|國際服)\s*)?'
+                         r'(?:本期|这期|当前|最近)活动(?:的)?(?:加成|奖励|任务|卡池)', text, re.I)
     if event:
-        return '/查活动 ' + ' '.join(value for value in event.groups() if value)
+        return '/查活动 ' + (event[1] + ' ' if event[1] else '') + '当前'
     board = re.fullmatch(
         r'(?:查\s*)?(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(.*?)\s*(?:的\s*)?激奏榜线\s*(.*)',
         unicodedata.normalize('NFKC', text), re.I)
@@ -126,7 +127,7 @@ def information_command(question, repository):
         return None  # Colored members refer to cards, not character profiles.
     text = re.sub(r"^(?:(?:请|帮我|查一下|查询|查看|看看|想看)\s*)+", "", text).strip(" ？?。！!")
     calendar = re.fullmatch(
-        r"(?:(jp|intl|tw|en|日服|台服|国际服|英服)\s*)?"
+        r"(?:(jp|intl|tw|en|日服|台服|臺服|国际服|國際服|英服)\s*)?"
         r"(现在|当前|最近|这期|本期|这次|下期|下一期|下次|下一次|下一个)(?:的)?\s*活动\s*"
         r"((?:啥时候|什么时候|何时|几号)(?:开始|结束)|(?:开始|结束)(?:时间|日期)(?:是什么|是啥|是几号)?|"
         r"结束了|结束|还在|还在进行|还没结束)(?:啊|呀|呢|吗|嘛|吧)?", text, re.I)
@@ -137,15 +138,18 @@ def information_command(question, repository):
         mode = '下期' if which in {'下期', '下一期', '下次', '下一次', '下一个'} else '日程开始' if '开始' in request else '日程'
         return '/查活动 ' + (region or '') + ' ' + mode
     current = re.fullmatch(
-        r"(?:(jp|hk|tw|kr|en|日服|国服|台服|韩服|英服|国际服)\s*)?"
-        r"(?:现在|当前|最近|这期|本期|这次)(?:的)?\s*(活动|卡池)\s*"
+        r"(?:(jp|hk|tw|kr|en|日服|国服|國服|台服|臺服|韩服|韓服|英服|国际服|國際服)\s*)?"
+        r"(现在|当前|最近|这期|本期|这次)(?:的)?\s*(活动|卡池)\s*"
         r"(?:是什么|有哪些|有什么|详情|(?:啥时候|什么时候|何时|几号)(?:开始|结束)|"
         r"(?:开始|结束)(?:时间|日期)(?:是什么|是啥|是几号)?)?(?:啊|呀|呢|吗|嘛|吧)?", text, re.I)
     if current:
-        region, kind = current[1] or "", current[2]
-        if kind == "卡池" and region not in {"", "jp", "日服"}:
-            return None
-        return "/查活动 " + region + " 当前" if kind == "活动" else "/查卡池 当前"
+        region, which, kind = current.groups()
+        region = (region or "").casefold()
+        if kind == "卡池":
+            if region not in {"", "jp", "日服"}:
+                return None
+            return "/查卡池 最近" if which == "最近" else "/查卡池 当前"
+        return "/查活动 " + region + " 当前"
     listing = re.fullmatch(r"(历史)?(活动|卡池)(?:有哪些|有什么|列表)", text)
     if listing:
         return ("/查活动 " if listing[2] == "活动" else "/查卡池 ") + ("历史" if listing[1] else "列表")

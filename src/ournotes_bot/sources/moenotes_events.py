@@ -17,7 +17,7 @@ import time
 import uuid
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -33,6 +33,9 @@ SERVERS = {"jp": ("日服", 9, "jp", "ja"), "tw": ("国服", 8, "hk-tw-mo", "zh-
            "kr": ("韩服", 9, "kr", "ko"), "en": ("英服", 0, "en", "en")}
 _NETWORK_SLOTS = threading.BoundedSemaphore(3)
 _TABLES = ("MasterEvent", "MasterChallengeMusic", "MasterLiveMusic", "MasterText", "MasterStoryChapter")
+ACTIVITY_STALE_NOTE = "当前活动使用同源旧快照，活动状态可能变化。"
+_TRACKER_ACTIVITY_FALLBACK = "当前活动接口暂不可用，使用短期旧快照"
+_TRACKER_ACTIVITY_STALE = "来源将活动快照标记为陈旧"
 
 
 class SourceError(Exception):
@@ -311,6 +314,11 @@ class EventSnapshot:
     api_start_ms: int | None = None
     api_end_ms: int | None = None
     provider: str | None = None
+
+    @property
+    def stale(self) -> bool:
+        return any(note in self.notes for note in (
+            ACTIVITY_STALE_NOTE, _TRACKER_ACTIVITY_FALLBACK, _TRACKER_ACTIVITY_STALE))
 
 
 @dataclass(frozen=True)
@@ -739,9 +747,11 @@ class EventCutoffRepository:
                                    collect_status=str(row.get("collectStatus", "unknown")),
                                    position_source=str(row.get("positionSource", "")),
                                    effective_start_ms=start, effective_end_ms=end))
-        notes = ["当前活动接口暂不可用，使用短期旧快照"] if entry.fallback else []
+        notes = []
+        if entry.fallback:
+            notes.append(_TRACKER_ACTIVITY_FALLBACK)
         if data.get("stale") is True:
-            notes.append("来源将活动快照标记为陈旧")
+            notes.append(_TRACKER_ACTIVITY_STALE)
         event = EventSnapshot(server, event_id, f"活动 {event_id}", str(data.get("eventStatus", "unknown")),
                               _ms(data.get("startAt")), _ms(data.get("endAt")), tuple(songs), notes=tuple(notes),
                               api_start_ms=_ms(data.get("startAt")), api_end_ms=_ms(data.get("endAt")))
@@ -828,15 +838,19 @@ class EventCutoffRepository:
         except SourceError as exc:
             messages = {"pending": "来源采集中", "rate_limited": "来源限流，稍后重试", "not_found": "本曲暂无榜单", "budget": "本次查询预算已用尽"}
             if history:
-                history.failure(event.server, event.event_id, song.challenge_id, exc.code)
+                with self._board_history_writer():
+                    history.failure(event.server, event.event_id, song.challenge_id, exc.code)
             return BoardSnapshot(song, status=messages.get(exc.code, "本曲来源暂不可用"))
         if history and entry.late:
-            history.record(event, self._snapshot(event, song, entry.late))
+            with self._board_history_writer():
+                history.record(event, self._snapshot(event, song, entry.late))
         board = self._snapshot(event, song, entry)
         if history:
             if entry.fallback:
-                history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
-            stored = history.record(event, board)
+                with self._board_history_writer():
+                    history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
+            with self._board_history_writer():
+                stored = history.record(event, board)
             self._note_retrieval('history_result',stored)
             if stored == "conflict":
                 board = replace(board, scores=(), status="同一源时刻分数冲突，暂无可信当前值", quality="conflict")
@@ -906,5 +920,11 @@ class EventCutoffRepository:
                              freshness=freshness)
 
     def boards(self, event: EventSnapshot, songs: tuple[EventSong, ...], deadline: float) -> tuple[BoardSnapshot, ...]:
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        # Fetch each board concurrently, then serialize sibling writes to their shared history.
+        # The store keeps its bounded wait for other requests and processes.
+        with ThreadPoolExecutor(max_workers=3, initializer=setattr,
+                                initargs=(self._diagnostic_local, 'history_writer', threading.Lock())) as pool:
             return tuple(pool.map(lambda song: self.board(event, song, deadline), songs))
+
+    def _board_history_writer(self):
+        return getattr(self._diagnostic_local, 'history_writer', nullcontext())

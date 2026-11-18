@@ -15,6 +15,7 @@ class InfoSchedule:
     start: str
     end: str
     zone: str = '日本时间 UTC+9'
+    stale: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class InfoAnswer:
     evidence_expires_at: float | None = None
     calendar_time_status: Literal["exact", "related", "unavailable"] | None = None
     calendar_time: CalendarTime | None = None
+    calendar_source_url: str | None = None
 
 
 def row_text(row: InfoRow) -> str:

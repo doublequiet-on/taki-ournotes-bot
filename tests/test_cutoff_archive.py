@@ -60,7 +60,7 @@ class ArchiveTests(unittest.TestCase):
                 self.assertEqual(answer.histories[0][1].total, 2)
 
     def test_parameters_any_order_round_trip_and_numeric_mode(self):
-        for parts in itertools.permutations(('活动ID=12', 'jp', '歌曲ID=101', '3-3', '仅数值')):
+        for parts in itertools.permutations(('活动ID=12', 'jp', '3-3', '仅数值')):
             request = parse_cutoff(' '.join(parts))
             self.assertEqual(parse_cutoff(request.command_label()), request)
             with patch.object(self.history, 'read', side_effect=AssertionError('numeric mode should not read trends')):
@@ -68,7 +68,7 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual(answer.status, 'success', answer.text)
             self.assertEqual(answer.ranks, (3,))
             self.assertEqual(answer.boards[0].score(3), 0)
-        answer = self.ask('活动="星の 約束" 歌名=歌曲甲 1')
+        answer = self.ask('活动="星の 約束" 1')
         self.assertEqual(answer.ranks, tuple(range(1, 12)))
         self.assertEqual(answer.request.event_name, '星の 約束')
         self.assertEqual(parse_natural_cutoff('/查榜线 活动ID=12').event_id, '12')
@@ -93,8 +93,8 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(parse_cutoff('/查榜线 12').target_rank, 12)
         self.assertEqual(self.ask('id999').status, 'empty')
 
-    def test_short_id_combinations_conflicts_and_literal_song_names(self):
-        for groups in itertools.permutations(('id12', 'jp', '歌曲ID=101', '3-3')):
+    def test_short_id_combinations_conflicts_and_literal_event_names(self):
+        for groups in itertools.permutations(('id12', 'jp', '3-3')):
             answer = self.ask(' '.join(groups))
             self.assertEqual(answer.status, 'success', answer.text)
             self.assertEqual(answer.event.event_id, '12')
@@ -104,10 +104,6 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.ask('hk id12').status, 'empty')
         for text in ('id12 id13', 'id12 活动ID=13', 'id0', 'id-1', 'id1.5', 'id+1'):
             self.assertEqual(self.ask(text).status, 'invalid_arguments', text)
-        literal = parse_cutoff('歌名="id12" 50')
-        self.assertEqual(literal.event_id, '')
-        self.assertEqual(literal.query, 'id12')
-        self.assertEqual(literal.target_rank, 50)
         self.assertEqual(parse_cutoff('活动="id12"').event_name, 'id12')
 
     def test_missing_unknown_server_disabled_and_bad_store_do_not_fall_back(self):
@@ -166,17 +162,16 @@ class ArchiveTests(unittest.TestCase):
         self.repo.capture_catalog = lambda: SimpleNamespace(activities=(), songs=(
             SimpleNamespace(id=101, title='本地中文歌名', jacket_url='',
                             titles=('本地中文歌名', 'Catalog English', 'カタログ曲名')),))
-        for name in ('記録された曲名', 'Recorded English', '本地中文歌名', 'Catalog English', 'カタログ曲名'):
-            with self.subTest(name=name):
-                answer = self.ask('id12 歌名=' + json.dumps(name, ensure_ascii=False))
-                self.assertEqual(answer.status, 'success', answer.text)
-                self.assertEqual(answer.boards[0].score(1), 123)
-                self.assertEqual(answer.boards[0].song.title, '本地中文歌名')
+        result = self.ask('id12')
+        self.assertEqual(result.boards[0].score(1), 123)
+        self.assertEqual(result.boards[0].song.title, '本地中文歌名')
+        self.assertIn('Recorded English', result.boards[0].song.names)
+        self.assertIn('Catalog English', result.boards[0].song.names)
 
     def test_latest_conflict_uses_older_whole_observation_and_reports_conflict(self):
         self.record(self.history, self.event, self.event.songs[0], (200,), STAMP + 1000)
         self.record(self.history, self.event, self.event.songs[0], (300,), STAMP + 1000)
-        answer = self.ask('活动ID=12 歌曲ID=101')
+        answer = self.ask('活动ID=12')
         self.assertEqual(answer.boards[0].scores[:3], (100, None, 0))
         self.assertEqual(answer.boards[0].fetched_ms, STAMP)
         self.assertIn('同一时间分数冲突', answer.text)
@@ -221,7 +216,7 @@ class ArchiveTests(unittest.TestCase):
     def test_archive_renders_overview_single_song_and_table(self):
         from PIL import Image
         import io
-        for query in ('活动ID=12', '活动ID=12 歌曲ID=101', '活动ID=12 1-3'):
+        for query in ('活动ID=12', '活动ID=12', '活动ID=12 1-3'):
             answer = self.ask(query)
             pages = render_cutoff(answer)
             self.assertTrue(pages)
@@ -233,7 +228,7 @@ class ArchiveTests(unittest.TestCase):
         song = self.event.songs[0]
         self.record(self.history, self.event, song, (90, None, 0), STAMP + 1000)
         self.record(self.history, self.event, replace(song, effective_end_ms=self.event.end_ms), (999, 888, 777), STAMP + 20000)
-        answer = self.ask('id12 歌曲ID=101 1-3')
+        answer = self.ask('id12 1-3')
         self.assertEqual(answer.boards[0].scores[:3], (90, None, 0))
         self.assertEqual(answer.boards[0].fetched_ms, STAMP + 1000)
         self.assertIn('超出榜单有效期', answer.text)
@@ -257,7 +252,7 @@ class ArchiveTests(unittest.TestCase):
         self.record(self.history, self.event, song, (200,), STAMP + 3000)
         with closing(sqlite3.connect(self.history.path)) as db, db:
             db.execute('UPDATE observations SET scores=? WHERE source_ms=?', ('[true,"100"]', STAMP + 3000))
-        board = self.ask('id12 歌曲ID=101').boards[0]
+        board = self.ask('id12').boards[0]
         self.assertEqual(board.scores[:3], (90, None, 0))
         self.assertEqual(board.fetched_ms, STAMP + 1000)
         self.assertIn('分数记录损坏', ' '.join(board.notes))
@@ -284,7 +279,7 @@ class ArchiveTests(unittest.TestCase):
             seen.append(str(value))
             return original(canvas, x, y, value, *args, **kwargs)
         with patch.object(Canvas, 'text', capture):
-            for query in ('id12 1-3', 'id12', 'id12 歌曲ID=101 1-3'):
+            for query in ('id12 1-3', 'id12', 'id12 1-3'):
                 answer = self.ask(query)
                 pages = ranking_layout.render(answer, assets={}, load=lambda *args: None, display_time=display_time,
                                               server_label='日服', timezone_label=zone_label('jp'))

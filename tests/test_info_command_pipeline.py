@@ -157,6 +157,7 @@ class InfoCommandPipelineTests(unittest.TestCase):
         for question, module, function in (
             ('/问 高松灯的生日是什么', 'character_query', 'execute_character'),
             ('/问 当前的卡池有哪些', 'gacha_query', 'execute_gacha'),
+            ('/查 JP当前卡池有哪些', 'gacha_query', 'execute_gacha'),
             ('/问 历史活动有哪些', 'activity_query', 'execute_activity'),
             ('/问 本期卡池什么时候结束呢', 'gacha_query', 'execute_gacha'),
             ('/问 这期活动详情', 'activity_query', 'execute_activity'),
@@ -295,6 +296,27 @@ class InfoCommandPipelineTests(unittest.TestCase):
             self.assertEqual(next_reply.pages, cursor.remaining)
             execute.assert_called_once()
 
+    def test_gacha_image_captions_keep_only_confirmed_commands_on_their_pages(self):
+        rows = (
+            InfoRow('卡池', command='/查卡池 12'),
+            InfoRow('UP 成员卡', command='/查卡 7'),
+            InfoRow('UP 留影卡', command='/查留影卡 7'),
+            InfoRow('关联活动', command='/查活动 4'),
+        )
+        views = (InfoView('卡池详情', rows=rows),)
+        answer = InfoAnswer(info_text(views), views=views)
+        pages = (SimpleNamespace(text='卡池\n/查卡池 12\n/查活动 99', image=b'page1'),
+                 SimpleNamespace(text='UP\n/查卡 7\n/查留影卡 7\n/查活动 4', image=b'page2'))
+        with patch('ournotes_bot.query.gacha_query.execute_gacha', return_value=answer), \
+             patch('ournotes_bot.rendering.info_layout.render_info', return_value=pages):
+            reply = _prepare_reply('/查卡池 12', self.repo, self.parser)
+        first, last = _expand_replies([reply])
+        self.assertEqual(first.image_commands, ('/查卡池 12',))
+        self.assertEqual(last.image_commands, ('/查卡 7', '/查留影卡 7', '/查活动 4'))
+        self.assertIn('图片 2/2', last.image_caption)
+        self.assertNotIn('/查活动 99', first.image_caption)
+        self.assertTrue(all(part.keep_text_lines for part in (first, last)))
+
     def test_errors_propagate_status_and_remain_text(self):
         answer = InfoAnswer('资料暂不可用', 'data_unavailable')
         with patch('ournotes_bot.query.gacha_query.execute_gacha', return_value=answer):
@@ -322,13 +344,13 @@ class InfoCommandPipelineTests(unittest.TestCase):
         with patch('ournotes_bot.query.character_query.execute_character', return_value=answer):
             reply = _prepare_reply('/查角色 tmr', self.repo, self.parser)
         self.assertTrue(reply.image)
-        self.assertEqual(reply.outbound_image_caption, '\n'.join(commands))
+        self.assertEqual(reply.image_caption, '\n'.join(commands))
         send = AsyncMock(return_value={'id': 'sent'})
         message = SimpleNamespace(id='fixture', _api=SimpleNamespace(post_group_message=send))
         with patch('ournotes_bot.platforms.qq.qq._upload_image', new=AsyncMock(return_value={'file_info': 'fixture'})):
             with self.assertRaises(StopIteration):
                 _deliver_reply(message, 'group', True, reply).send(None)
-        self.assertEqual(send.await_args.kwargs['content'], reply.outbound_image_caption)
+        self.assertEqual(send.await_args.kwargs['content'], reply.image_caption)
 
         row = {'delivery': 'fixture', 'id': 'request', 'status': 'ready', 'expires': 123}
         part = dict(id='0', position=0, mode='primary', status='pending', attempt=None, message=None)
@@ -337,7 +359,7 @@ class InfoCommandPipelineTests(unittest.TestCase):
         backend = SimpleNamespace(live=lambda *_: True, works={'fixture': work},
                                   ledger=SimpleNamespace(parts=lambda *_: [part]))
         plan = Backend.snapshot(backend, row, 'epoch')
-        self.assertEqual(plan['parts'][0]['text'], reply.outbound_image_caption)
+        self.assertEqual(plan['parts'][0]['text'], reply.image_caption)
 
     def test_character_caption_follows_its_saved_page_through_continuation(self):
         rendered = tuple(InfoPage(f'正文 {i}\n/查角色 {i}', b'image', (f'/查角色 {i}',)) for i in range(7))
@@ -346,9 +368,9 @@ class InfoCommandPipelineTests(unittest.TestCase):
             reply = _prepare_reply('/查角色', self.repo, self.parser)
             first = _expand_replies([reply])
             self.assertEqual(len(first), 5)
-            self.assertIn('/继续', first[-1].outbound_image_caption)
+            self.assertIn('/继续', first[-1].image_caption)
             remaining = _expand_replies([_prepare_followup(first[-1].context, parse_operation('/继续'), self.repo)])
-            self.assertEqual([p.outbound_image_caption.splitlines()[0] for p in (*first, *remaining)],
+            self.assertEqual([p.image_caption.splitlines()[0] for p in (*first, *remaining)],
                              [f'/查角色 {i}' for i in range(7)])
             execute.assert_called_once()
 
@@ -360,7 +382,7 @@ class InfoCommandPipelineTests(unittest.TestCase):
             reply = _prepare_reply('/查角色', self.repo, self.parser)
         image, companion = reply.pages
         self.assertEqual(image.image, b'image')
-        self.assertEqual(image.image_caption, '')
+        self.assertEqual(image.image_commands, ())
         self.assertEqual(companion.text.splitlines(), list(commands))
         self.assertTrue(companion.keep_text_lines)
 

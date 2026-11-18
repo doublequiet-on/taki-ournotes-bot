@@ -461,8 +461,8 @@ def export_cutoffs(g, repo):
                    for i in range(288) if not 140<i<150)
     histories = tuple((s.challenge_id,HistoryView(points)) for s in songs)
     base = CutoffAnswer(CutoffRequest(),event,boards,histories=histories)
-    variants = {"three":base,"single":replace(base,boards=boards[:1],request=CutoffRequest(song_number=1)),
-                "two":replace(base,boards=boards[:2],request=CutoffRequest(extra_queries=tuple(s.title for s in songs[:2]))),
+    variants = {"three":base,"single":replace(base,boards=boards[:1],request=CutoffRequest()),
+                "two":replace(base,boards=boards[:2],request=CutoffRequest()),
                 "zero":replace(base,histories=tuple((s.challenge_id,HistoryView(warning="暂无历史，从启用后采集。")) for s in songs)),
                 "one":replace(base,histories=tuple((s.challenge_id,HistoryView(points[-1:])) for s in songs)),
                 "overlap":replace(base,histories=tuple((s.challenge_id,HistoryView(tuple(replace(p,scores=(p.scores[0],)*5) for p in points))) for s in songs)),
@@ -471,7 +471,7 @@ def export_cutoffs(g, repo):
                           ("discrete",CutoffRequest(ranks=(1,3,37))), ("exact",CutoffRequest(mode="range",range_bounds=(37,37))),
                           ("full-100",CutoffRequest(mode="range",range_bounds=(1,100))), ("numeric",CutoffRequest(rank=50,numeric_only=True))):
         variants[name]=replace(base,request=request,histories=())
-    variants["single-full-100"] = replace(variants["full-100"],boards=boards[:1],request=CutoffRequest(mode="range",range_bounds=(1,100),song_number=1))
+    variants["single-full-100"] = replace(variants["full-100"],boards=boards[:1],request=CutoffRequest(mode="range",range_bounds=(1,100)))
     variants["long-fields"] = replace(variants["near-50"], boards=tuple(replace(b,song=replace(b.song,title="合成长歌曲名 · 中文と日本語 / Long title "*3),
                                    scores=tuple(10**20+r for r in range(100)),player_ids=("12345678901234567890",)*100,
                                    player_names=("合成超长用户名_中文と日本語_LongName"*2,)*100) for b in boards))
@@ -479,7 +479,7 @@ def export_cutoffs(g, repo):
         variants["server-"+server] = replace(base,event=replace(event,server=server),request=CutoffRequest(server=server))
     with patch.object(cv,"load_artwork",return_value={}):
         with patch.object(repo.event_cutoffs,"event",return_value=event):
-            g.sample("text","activity","/查活动",lambda:g.qq.prepare_reply("/查活动",repo,None),expected="image",
+            g.sample("text","activity","/查活动 当前",lambda:g.qq.prepare_reply("/查活动 当前",repo,None),expected="image",
                      synthetic=("活动", "歌曲", "时间"),source="合成活动，由真实活动查询生成图片",route="_prepare_reply → execute_activity → 活动图片")
         for name, answer in variants.items():
             family = "cutoff-trend" if answer.request.mode=="trend" else "cutoff-ranks"

@@ -64,7 +64,8 @@ def command_kind(content: str) -> str:
         return 'continuation'
     head = content.split(None, 1)[0].lstrip('/').casefold()
     return {'帮助': 'help', 'help': 'help', '查卡': 'card', '查曲': 'song',
-            '查谱面': 'chart', '查榜线': 'cutoff', '查活动': 'event', '一图流': 'event'}.get(head, 'other')
+            '查谱面': 'chart', '查榜线': 'cutoff', '榜线': 'cutoff', '查榜線': 'cutoff', '榜線': 'cutoff',
+            '查活动': 'event', '一图流': 'event'}.get(head, 'other')
 
 
 def recognizes_message(content: str) -> bool:
@@ -132,16 +133,16 @@ class PreparedReply:
     evidence: tuple = ()
     evidence_deadline: float | None = None  # Monotonic; never extended by delivery/ACK.
     keep_text_lines: bool = False
-    image_caption: str = ""
-
-    @property
-    def outbound_image_caption(self):
-        progress = self.context.image_caption if isinstance(self.context, DeliveryCursor) else ""
-        return "\n".join(part for part in (self.image_caption, progress) if part) or " "
+    image_commands: tuple[str, ...] = ()
 
     @property
     def passive_slots(self):
         return max(1, len(self.fallback_texts))
+
+    @property
+    def image_caption(self):
+        progress = self.context.image_caption if isinstance(self.context, DeliveryCursor) else ''
+        return '\n'.join((*self.image_commands, progress) if progress else self.image_commands) or ' '
 
 
 @dataclass(frozen=True)
@@ -175,7 +176,7 @@ class DeliveryCursor:
 
     @property
     def retained_bytes(self):
-        return sum(len(p.image or b'') + len(p.text.encode('utf-8')) + len(p.image_caption.encode('utf-8'))
+        return sum(len(p.image or b'') + len(p.text.encode('utf-8')) + sum(len(cmd.encode('utf-8')) for cmd in p.image_commands)
                    for p in self.remaining)
 
 
@@ -183,7 +184,7 @@ def fallback_cursor(reply, *, text_limit=1800):
     previous=reply.context if isinstance(reply.context,DeliveryCursor) else None
     query=previous.query_context if previous else reply.context
     text = reply.text.removesuffix(previous.text_progress) if previous else reply.text
-    fallback = replace(reply, text=text, image=None, context=query, fallback_texts=(), image_caption='')
+    fallback = replace(reply, text=text, image=None, context=query, fallback_texts=(), image_commands=())
     pages = _split_reply_text(fallback, text_limit - 100)
     if previous:
         pages += previous.remaining
@@ -650,7 +651,7 @@ def activity_time_reply(answer, field):
         text = f'《{view.title}》的{label}时间暂未提供。'
     else:
         text = f'《{view.title}》的{label}时间是 {value}（{schedule.zone}）。'
-        if field == 'end' and schedule.status == '进行中':
+        if field == 'end' and schedule.status == '进行中' and not schedule.stale:
             text += '\n记得及时清 CP，别留到活动结束啦。'
         elif schedule.status == '已结束':
             text += '\n这期活动已经结束了。'
@@ -906,6 +907,7 @@ def render_prepared(reply, result, repository, locale, candidate=None):
 
 
 def render_prepared_inner(reply, result, repository, locale, candidate=None):
+    is_gacha = isinstance(result, CommandResult) and result.parsed[0] == 'gacha'
     try:
         if isinstance(result, QueryResult) and result.meta is not None:
             from ..rendering.song_metrics_layout import render, LAYOUT_VERSION
@@ -922,18 +924,29 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
         if isinstance(result, CommandResult) and (result.info is not None or result.activity is not None):
             from ..rendering.info_layout import render_info
             answer = result.info if result.info is not None else result.activity
+            is_activity = result.activity is not None
+            prefixes = (('/查活动 ', '/查榜线 ', '/查卡池 ') if is_activity else
+                        ('/查卡池 ', '/查活动 ', '/查卡 ', '/查留影卡 ') if is_gacha else ())
+            related_commands = {row.command for view in answer.views for row in view.rows
+                                if row.command.startswith(prefixes)}
             pages = []
             for page in render_info(answer, load=visual_asset):
-                caption = '\n'.join(page.commands) if result.parsed[0] == 'character' else ''
-                # Keep room for the group material URL, mention and delivery progress.
-                if len(caption) <= 1000:
-                    pages.append(PreparedReply(page.text, page.image, complete_text=True, image_caption=caption))
+                if result.parsed[0] == 'character':
+                    commands = page.commands
                 else:
-                    pages.append(PreparedReply(page.text, page.image, complete_text=True))
-                    pages.append(PreparedReply(caption, keep_text_lines=True))
+                    commands = tuple(dict.fromkeys(line for line in page.text.splitlines()
+                                                   if line in related_commands))
+                page_reply = PreparedReply(page.text, page.image, complete_text=True,
+                                           keep_text_lines=is_activity or is_gacha)
+                caption = '\n'.join(commands)
+                # Leave room for the platform mention, material URL and continuation count.
+                if len(caption) <= 1000:
+                    pages.append(replace(page_reply, image_commands=commands))
+                else:
+                    pages.extend((page_reply, PreparedReply(caption, keep_text_lines=True)))
             if pages:
                 return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=tuple(pages), complete_text=True)
-            return PreparedReply(answer.text, complete_text=True)
+            return PreparedReply(answer.text, complete_text=True, keep_text_lines=is_activity or is_gacha)
         full = None if result is not None and result.cutoff is not None else (song_detail_reply(result, repository, locale, candidate) or
                 complete_list_reply(result, repository, locale, candidate) or
                 complete_detail_reply(result, repository, locale, candidate) or
@@ -973,7 +986,8 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
         reply += "\n卡面图片暂不可用，请稍后重试。"
     is_info = isinstance(result, CommandResult) and (result.info is not None or result.activity is not None)
     return PreparedReply(reply, image, complete_text=is_info or result is not None and result.cutoff is not None,
-                         context=candidate, keep_text_lines=bool(result and result.catalog and result.catalog.is_candidate_list))
+                         context=candidate, keep_text_lines=is_gacha or bool(
+                             result and result.catalog and result.catalog.is_candidate_list))
 
 
 def complete_fallback(reply, result, locale, candidate, repository):
