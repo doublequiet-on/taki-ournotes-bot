@@ -534,8 +534,11 @@ class PublicQueryContractTests(unittest.TestCase):
 
         old = {'startAt': 1000, 'endAt': 1999, 'musicType': 99, 'missions': [1, 2, 3]}
         rules = [dict(old, startAt=i * 1000, endAt=i * 1000 + 999, musicType=i) for i in range(1, 6)]
-        rank = dict(id=1, name='新手', points=0, resetPoints=0, startAt=0)
-        league = dict(id=7, bandId=1, name='MyGO', rules=rules, songs=[], ranks=[rank])
+        rank = dict(id=1, name='新手1', rank=1, points=0, resetPoints=0, startAt=0)
+        ranks = [rank, dict(rank, id=2, name='新手2', points=50),
+                 dict(rank, id=3, name='青铜1', rank=2, points=100),
+                 dict(rank, id=4, name='青铜2', rank=2, points=200, startAt=3000)]
+        league = dict(id=7, bandId=1, name='MyGO', rules=rules, songs=[], ranks=ranks)
         reward = {'name': '测试奖励', 'leagueId': 7, 'rankId': 1, 'count': 3, 'from': 0, 'to': 0}
         season = dict(seasonId=7, title='测试赛季', startAt=1, endAt=30000, leagues=[league], dailyRewards=[reward])
         identity = dict(server='intl', releaseId='r-' + 'e' * 20, sourceId='fixture')
@@ -548,11 +551,13 @@ class PublicQueryContractTests(unittest.TestCase):
                 data = dict(schema='haneoka-resource-release-identity-v1', **identity)
             elif '/servers/intl/arena?' in url:
                 data = dict(schema='haneoka-arena-v1', identity=identity, entries={'7': season})
-            elif url.endswith('/tw/arena/seasons/7/leagues/1/ranking?start=100'):
-                data = dict(region='tw', seasonId='7', bandId='1', start=100, end=199,
-                            rows=[dict(rank=99, point=0, name='隐藏昵称', profileId='21234567890')])
-            elif url.endswith('/tw/arena/seasons/7/leagues/1/population?thresholds=0'):
-                data = dict(region='tw', seasonId='7', bandId='1', maxRank=0, tiers=[dict(threshold=0, count=0)])
+            elif url.endswith('/tw/arena/seasons/7/leagues/1/ranking?start=1'):
+                scores = [dict(rank=i, point=101-i, name='fixture') for i in range(1, 100)]
+                scores.append(dict(rank=99, point=0, name='隐藏昵称', profileId='21234567890'))
+                data = dict(region='tw', seasonId='7', bandId='1', start=1, end=100, maxRank=200, rows=scores)
+            elif url.endswith('/tw/arena/seasons/7/leagues/1/population?thresholds=0%2C50%2C100'):
+                data = dict(region='tw', seasonId='7', bandId='1', maxRank=5,
+                            tiers=[dict(threshold=0, count=0), dict(threshold=50, count=3), dict(threshold=100, count=2)])
             else:
                 self.fail('unexpected source request: ' + url)
             return 200, json.dumps(data).encode(), {}
@@ -577,10 +582,27 @@ class PublicQueryContractTests(unittest.TestCase):
         self.assertFalse(values.views)
         self.assertIn('T100\n舞台积分（AP）：0', values.text)
         self.assertNotIn('隐藏昵称', values.text)
+        self.assertEqual(len(calls), 3)
+        also_first = execute_arena('hk MyGO T1 T100', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('T100 · 显示名次 99', also_first.text)
+        self.assertEqual(len(calls), 3)
         population = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
         self.assertEqual(population.status, 'success')
-        self.assertIn('联赛上榜人数\n0', population.text)
-        self.assertIn('舞台积分 0+ · 人数：0', population.text)
+        self.assertIn('联赛上榜人数\n5', population.text)
+        self.assertIn('新手\n舞台积分 0–99 · 人数：3', population.text)
+        self.assertIn('青铜\n舞台积分 100+ · 人数：2', population.text)
+        self.assertNotIn('新手1', population.text)
+        divisions = execute_arena('hk MyGO 人数明细', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('新手1\n舞台积分 0–49 · 人数：0', divisions.text)
+        self.assertIn('新手2\n舞台积分 50–99 · 人数：3', divisions.text)
+        self.assertNotIn('青铜2', divisions.text)
+        self.assertEqual(len(calls), 4)
+
+        league['ranks'] = [ranks[-1]]
+        source.cache.clear()
+        future = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('暂无已开放的段位', future.text)
+        self.assertTrue(calls[-1].split('?')[0].endswith('/servers/intl/arena'))
 
         league['ranks'] = []
         source.cache.clear()
@@ -776,6 +798,10 @@ class PublicQueryContractTests(unittest.TestCase):
         from ournotes_bot.natural_query.on_query import public_information_command
         self.assertEqual(public_information_command('玩家 9223372036854775807 jp'), '/查玩家 9223372036854775807 jp')
         self.assertEqual(public_information_command('MyGO竞技场人数'), '/查竞技场 MyGO 人数')
+        self.assertEqual(public_information_command('MyGO激奏榜线 T100多少'), '/查激奏榜线 MyGO T100')
+        self.assertEqual(public_information_command('MyGO激奏榜线多少分'), '/查激奏榜线 MyGO')
+        self.assertEqual(public_information_command('韩服 MyGO 的激奏榜线人数明细'), '/查激奏榜线 韩服 MyGO 人数明细')
+        self.assertEqual(public_information_command('MyGO激奏榜线 T100再猜一下'), '/查激奏榜线 用法')
         self.assertEqual(public_information_command('本期活动奖励'), '/查活动 奖励')
         self.assertIsNone(public_information_command('玩家 99 jp 顺便猜一下密码'))
 

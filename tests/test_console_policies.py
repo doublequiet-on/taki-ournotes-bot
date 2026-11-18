@@ -1449,7 +1449,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         cases = (
             ('/查 MyGO竞技场人数', 'MyGO 人数', {}),
             ('/问 MyGO 激奏舞台 排期', 'MyGO 排期', {'command': '查激奏舞台'}),
-            ('/ask /查激奏榜线 hk MyGO T100', 'hk MyGO T100', {'command': '查激奏榜线'}),
+            ('/ask hk MyGO激奏榜线 T100多少', 'hk MyGO T100', {'command': '查激奏榜线'}),
         )
         for seq, (question, arguments, options) in enumerate(cases, 1):
             with patch('ournotes_bot.query.public_queries.execute_arena', return_value=answer) as execute:

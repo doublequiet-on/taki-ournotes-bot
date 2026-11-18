@@ -61,6 +61,8 @@ class InfoCommandPipelineTests(unittest.TestCase):
             ('/查 MyGO竞技场人数', 'public_queries', 'execute_arena'),
             ('/查 MyGO 激奏舞台 排期', 'public_queries', 'execute_arena'),
             ('/问 韩服MyGO激奏榜线人数', 'public_queries', 'execute_arena'),
+            ('/查 MyGO激奏榜线 T100多少', 'public_queries', 'execute_arena'),
+            ('/问 MyGO激奏榜线多少分', 'public_queries', 'execute_arena'),
             ('/ask /查激奏榜线 MyGO T100', 'public_queries', 'execute_arena'),
             ('/查 玩家 9223372036854775807 jp', 'public_queries', 'execute_player'),
             ('/查 本期活动奖励', 'activity_query', 'execute_activity'),

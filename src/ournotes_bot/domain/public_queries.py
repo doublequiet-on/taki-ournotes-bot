@@ -22,6 +22,7 @@ class ArenaRequest:
     last: int = 20
     positions: tuple[int, ...] = ()
     numeric_only: bool = False
+    population_details: bool = False
 
 
 @dataclass(frozen=True)

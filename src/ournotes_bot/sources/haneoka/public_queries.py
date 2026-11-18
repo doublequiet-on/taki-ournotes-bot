@@ -228,7 +228,11 @@ class PublicQueries:
         if population and not thresholds:
             raise PublicQueryError('data_unavailable', '该联赛暂无段位门槛资料，无法查询段位人数。')
         operation = 'population' if population else 'ranking'
-        query = {'thresholds': ','.join(map(str, thresholds))} if population else {'start': request.first}
+        # The upstream fills a 100-row window starting at the requested position.
+        # Align a request contained in one page so it doesn't need the following page.
+        page_first = (request.first - 1) // 100 * 100 + 1
+        source_first = page_first if request.last < page_first + 100 else request.first
+        query = {'thresholds': ','.join(map(str, thresholds))} if population else {'start': source_first}
         path = (f'/api/v1/game/records/{request.region}/arena/seasons/{season}/leagues/{request.band}/'
                 + operation + '?' + urlencode(query))
         snapshot = self.read(path, ttl=1800 if population else 60)
@@ -249,10 +253,11 @@ class PublicQueries:
                 integer(row.get('count'))
         else:
             rows = objects(value.get('rows'))
-            if len(rows) > 100 or value.get('start', request.first) != request.first or value.get('end', request.first + 99) != request.first + 99:
+            source_last = source_first + 99
+            if len(rows) > 100 or value.get('start', source_first) != source_first or value.get('end', source_last) != source_last:
                 raise PublicQueryError('invalid_source', '排名位置窗口异常。')
             previous = 0
-            for position, row in enumerate(rows, request.first):
+            for position, row in enumerate(rows, source_first):
                 rank = row.get('rank')
                 if rank is not None:
                     integer(rank, minimum=1)

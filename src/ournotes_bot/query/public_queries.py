@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 from dataclasses import replace
+from itertools import groupby
 
 from ..domain.public_queries import ArenaRequest, PlayerRequest, PublicQueryError
 from .contracts.info import InfoAnswer, InfoRow, InfoView
@@ -24,10 +25,11 @@ STAGE_COMMAND = '查激奏舞台'
 RANK_COMMAND = '查激奏榜线'
 STAGE_MODES = {'总览', '规则', '日程', '曲池', '段位', '奖励', '段位与奖励'}
 RANK_MODES = {'榜单', '人数'}
-MODE_ALIASES = {'概览': '总览', '排期': '日程', '乐曲': '曲池', '排行榜': '榜单', '段位人数': '人数'}
+MODE_ALIASES = {'概览': '总览', '排期': '日程', '乐曲': '曲池', '排行榜': '榜单',
+                '段位人数': '人数', '人数明细': '人数', '段位人数明细': '人数'}
 ARENA_HELP = '/查竞技场 [jp/hk/kr/en] [乐队] [总览/日程/曲池/段位/奖励/榜单/人数] [赛季=N] [排名=1-20]'
 STAGE_HELP = '/查激奏舞台 [服] [乐队] [概览/规则/排期/乐曲/段位与奖励] [赛季=N]'
-RANK_HELP = '/查激奏榜线 [服] 乐队 [榜单/人数] [赛季=N] [50 或 20-40 或 T1 T10 T100] [仅数值]'
+RANK_HELP = '/查激奏榜线 [服] 乐队 [榜单/人数/人数明细] [赛季=N] [50 或 20-40 或 T1 T10 T100] [仅数值]'
 PLAYER_HELP = '/查玩家 玩家ID [jp/hk/kr/en] [名片 [页N]]'
 MAX_POSITION = 999_999_999
 
@@ -95,6 +97,8 @@ def _arena_band(term):
 
 def parse_arena(query, *, command=None):
     query = unicodedata.normalize('NFKC', query).strip()
+    if command == RANK_COMMAND and query == '用法':
+        raise PublicQueryError('invalid_arguments', RANK_HELP)
     region, tokens = region_tokens(query.split())
     legacy = command is None
     stage = command == STAGE_COMMAND
@@ -111,6 +115,7 @@ def parse_arena(query, *, command=None):
         raise PublicQueryError('invalid_arguments', f'「{mode}」请使用 /{target}。')
     season, first, last, ranking = None, 1, 20, ''
     positions, numeric_only = (), False
+    population_details = mode == '人数' and (legacy or any(token in {'人数明细', '段位人数明细'} for token in tokens))
     remainder = []
     for token, normalized_mode in zip(tokens, normalized_modes):
         if normalized_mode in permitted:
@@ -150,11 +155,12 @@ def parse_arena(query, *, command=None):
         raise PublicQueryError('invalid_arguments', '无法确认乐队。\n' + help_text)
     if mode in RANK_MODES and band is None:
         game_region = 'hk' if region == 'tw' else region
-        suffix = (' ' + mode if modes else '') + (f' 赛季={season}' if season else '')
+        selected_mode = '人数明细' if population_details else mode
+        suffix = (' ' + selected_mode if modes else '') + (f' 赛季={season}' if season else '')
         suffix += (' ' + ranking if ranking else '') + (' 仅数值' if numeric_only else '')
         examples = '\n'.join(f'/{RANK_COMMAND} {game_region} {name}{suffix}' for name in BANDS.values())
         raise PublicQueryError('invalid_arguments', '请指定乐队：\n' + examples)
-    return ArenaRequest(region, band, mode, season, first, last, positions, numeric_only)
+    return ArenaRequest(region, band, mode, season, first, last, positions, numeric_only, population_details)
 
 
 def parse_player(query):
@@ -307,26 +313,43 @@ def _arena_standings(request, rows):
     return result, 'success'
 
 
-def _arena_population(league, images, board):
+def _arena_population(ranks, images, board, details):
     max_rank = board.get('maxRank')
     rows = [InfoRow('联赛上榜人数', (str(max_rank) if max_rank is not None else '未获取',))]
-    ranks = {rank['points']: rank for rank in league['ranks']}
     ends = {tier['threshold']: later['threshold'] - 1 for tier, later in zip(board['tiers'], board['tiers'][1:])}
-    for tier in board['tiers']:
-        lower = tier['threshold']
+
+    def group_key(tier):
+        threshold = tier['threshold']
+        major = ranks[threshold].get('rank')
+        return ('major', major) if not details and type(major) is int else ('division', threshold)
+
+    for (scope, _), members in groupby(board['tiers'], key=group_key):
+        group = tuple(members)
+        lower, upper = group[0]['threshold'], group[-1]['threshold']
         rank = ranks[lower]
-        span = f'{lower}–{ends[lower]}' if lower in ends else f'{lower}+'
-        rows.append(InfoRow(localized(rank['name']), (f"舞台积分 {span} · 人数：{tier['count']}",),
+        name = localized(rank['name'])
+        if scope == 'major':
+            name = re.sub(r'\s*[0-9０-９]+$', '', name) or name
+        span = f'{lower}–{ends[upper]}' if upper in ends else f'{lower}+'
+        count = sum(tier['count'] for tier in group)
+        rows.append(InfoRow(name, (f'舞台积分 {span} · 人数：{count}',),
                             image_url=images.get('ranks', {}).get(str(rank.get('rank')), '')))
     return rows
 
 
-def _arena_records(request, source, season, league, images):
-    thresholds = tuple(sorted({rank['points'] for rank in league['ranks']})) if request.mode == '人数' else ()
+def _arena_records(request, source, season, league, images, now):
+    ranks = {}
+    if request.mode == '人数':
+        for rank in league['ranks']:
+            if rank['startAt'] <= now:
+                ranks.setdefault(rank['points'], rank)
+        if not ranks and league['ranks']:
+            raise PublicQueryError('data_unavailable', '该联赛暂无已开放的段位。')
+    thresholds = tuple(sorted(ranks))
     snapshot = source.board(request, season['seasonId'], thresholds)
     board = json.loads(snapshot.body)
     if request.mode == '人数':
-        rows, status = _arena_population(league, images, board), 'success'
+        rows, status = _arena_population(ranks, images, board, request.population_details), 'success'
     else:
         rows, status = _arena_standings(request, board['rows'])
     return [*rows, InfoRow('观测时间', quality_lines(snapshot))], status
@@ -359,7 +382,7 @@ def execute_arena(query, repository, *, now=None, command=None):
         live = request.mode in RANK_MODES
         if live:
             league = leagues[0]
-            details, status = _arena_records(request, source, season, league, images)
+            details, status = _arena_records(request, source, season, league, images, now)
             rows.extend(details)
             section = localized(league['name']) + ' · ' + ('段位人数' if request.mode == '人数' else '榜线')
         else:
