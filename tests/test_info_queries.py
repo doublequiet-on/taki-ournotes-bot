@@ -96,7 +96,7 @@ class InformationQueryTests(unittest.TestCase):
 
     def test_activity_rejects_ignored_sections_and_numeric_expressions(self):
         repo = Repository(catalog(activities=(activity(2, '重名甲'), activity(3, '重名乙'))))
-        for query in ('列表 奖励', '历史 2 奖励', '日程 奖励', '加成 奖励', '-2', '２－３', '当前 jp'):
+        for query in ('列表 奖励', '历史 2 奖励', '日程 奖励', '加成 奖励', '-2', '３－２', '当前 jp'):
             with self.subTest(query=query):
                 self.assertEqual(execute_activity(query, repo, now=NOW).status, 'invalid_arguments')
         self.assertEqual(repo.captures, 0)
@@ -164,6 +164,59 @@ class InformationQueryTests(unittest.TestCase):
         for record, expected in ((records[1], '没有确认匹配的活动'), (records[3], '没有找到符合条件的活动')):
             repo.snapshot = catalog(activities=(record,))
             self.assertIn(expected, execute_activity('历史 角色=高松灯', repo, now=NOW).text)
+
+    def test_activity_choices_are_or_within_each_field_and_and_across_fields(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        def past(ident, band, person, color, kind):
+            return activity(ident, f'往期 {ident}', end=NOW, event_type_id=kind,
+                            details=project_details({'effects': [{'cardType': color, 'targets': {
+                                'band': {'name': band}, 'character': {'name': person},
+                            }}]}))
+        repo = Repository(catalog(activities=(
+            past(2, 'MyGO!!!!!', '高松灯', 1, 1),
+            past(3, 'Ave Mujica', '若叶睦', 2, 2),
+            past(4, 'MyGO!!!!!', '高松灯', 3, 1),
+            past(5, 'MyGO!!!!!', '高松灯', 1, 3),
+            past(6, 'Afterglow', '若叶睦', 1, 1),
+            past(7, 'MyGO!!!!!', '千早爱音', 1, 2),
+        )))
+        for query in (
+            '历史 MyGO,Ave Mujica 红,蓝 tmr,若叶睦 类型 挑战演出,2',
+            '历史 乐队 MyGO, Ave Mujica 属性=红/蓝 角色 tmr、若叶睦 类型1,2',
+        ):
+            with self.subTest(query=query):
+                result = execute_activity(query, repo, now=NOW)
+                self.assertEqual([row.command for row in result.views[0].rows], ['/查活动 3', '/查活动 2'])
+                self.assertIn('加成属性 · 蓝色', result.text)
+                self.assertIn('加成属性 · 红色', result.text)
+                self.assertIn('挑战演出活动（类型 ID 1）', result.text)
+        self.assertEqual(execute_activity('历史 类型 对邦', repo, now=NOW).status, 'invalid_arguments')
+        self.assertEqual(execute_activity('历史 红,未知', repo, now=NOW).status, 'invalid_arguments')
+
+    def test_activity_id_interval_keeps_exact_ids_and_does_not_cross_history_scope(self):
+        repo = Repository(catalog(activities=(activity(1, '过去甲', end=NOW), activity(2, '过去乙', end=NOW),
+                                               activity(3, '活动三'), activity(5, '活动五'))))
+        samples = {
+            '历史 ID 2到5': ('/查活动 2',),
+            '历史 ２－５': ('/查活动 2',),
+            '列表 ID=2~3': ('/查活动 3', '/查活动 2'),
+            '2 — 3': ('/查活动 3', '/查活动 2'),
+            '列表 ID>=3': ('/查活动 5', '/查活动 3'),
+            '列表 2以下': ('/查活动 2', '/查活动 1'),
+            '列表 ID 小于3': ('/查活动 2', '/查活动 1'),
+            '历史 ID 2-5 类型2': (),
+        }
+        for query, expected in samples.items():
+            with self.subTest(query=query):
+                result = execute_activity(query, repo, now=NOW)
+                self.assertEqual(tuple(row.command for row in result.views[0].rows), expected)
+        for query in ('列表 ID 0-3', '列表 ID 4到2', '列表 ID 1.2到3', '历史 ID 2-5 ID>=3',
+                      '历史 ID 2-', '列表 类型 2-5', '列表 2到5 奖励', '历史 -2 红色'):
+            with self.subTest(query=query):
+                self.assertEqual(execute_activity(query, repo, now=NOW).status, 'invalid_arguments')
+        for query in ('2', 'ID 2', '活动ID=2'):
+            self.assertEqual(execute_activity(query, repo, now=NOW).views[0].layout, 'activity-summary')
 
     def test_calendar_limits_time_conflicts_to_the_requested_slot(self):
         current = activity(1, '当前唯一')
