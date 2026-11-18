@@ -89,7 +89,7 @@ SOURCE_SEMANTICS = '''
 
 RESEARCH_SEMANTICS = '''
 面对比较、多项查询和连续修改，使用 research_task 维护本次目标、对象顺序和所需字段。宿主提供的 current_entities 和上轮任务引用已确认对象身份，可直接 read_entity_fields，不必重复 site_search/site_read；没有身份时才用站内搜索确认。research_task 和 read_entity_fields 可在同次回复连续调用，最多两个对象可一次读完。第二张、换成另一张等以 targets 顺序和当前消息为准，变更时更新任务。谱面条件用 requirements.difficulty 保存；后续只改对象时继承未改的难度，不重复追问。歌曲等级和Note比较用 level/notes 字段；song_metrics 用于全曲筛选排序，不能代替多对象字段比较。闲聊不创建任务。
-工具返回 coverage 是实际读取覆盖情况，回答前照顾每项要求。用户说不用了、先这样时，用 research_task cancel 结束当前任务。明确换题时使用当前对象。
+工具返回 coverage 是实际读取覆盖情况。多项知识要求按条件拆开；读完知识后，可在 research_task 的对应要求中用 evidence 关联确实支持该对象和条件的 chunk_id。没有对象时 entity_ref 填空串。可同时更新任务和查询下一项。缺资料时回答已查部分并指出缺项。用户说不用了、先这样时，用 research_task cancel 结束当前任务。明确换题时使用当前对象。
 '''
 
 
@@ -269,7 +269,9 @@ def research_tools():
     refs={'type':'array','items':string(80),'maxItems':2}
     fields={'type':'array','items':{'type':'string','enum':list(FIELDS)},'maxItems':len(FIELDS)}
     difficulty={'type':'string','enum':['','EASY','NORMAL','HARD','EXPERT']}
-    requirement=obj({'label':string(80),'entity_refs':refs,'fields':fields,'knowledge':{'type':'boolean'},'difficulty':difficulty},
+    binding=obj({'entity_ref':string(80),'chunk_id':string(200)},('entity_ref','chunk_id'))
+    requirement=obj({'label':string(80),'entity_refs':refs,'fields':fields,'knowledge':{'type':'boolean'},'difficulty':difficulty,
+                     'evidence':{'type':'array','items':binding,'maxItems':6}},
                     ('label','entity_refs','fields','knowledge','difficulty'))
     return {
         'research_task':Tool('research_task','建立或更新当前资料任务及对象顺序。entity_refs只用已读取详情或有效任务提供的引用；需求用字段和审核知识表达。cancel结束旧任务。',
@@ -774,13 +776,18 @@ class ChatAgent:
                 if not work.quote_turn_only and task.transition!='switch':
                     self.tasks.clear(work.request.scope,work.request.user_id,clear_topic=False)
                     task.revision=self.tasks.generations.get(self.tasks.key(work.request),task.revision)
-                task.goal='';task.requirements=[];task.targets=[];task.readings={};task.knowledge=False
+                task.goal='';task.requirements=[];task.targets=[];task.readings={};task.knowledge_chunks.clear()
                 self.task_event(work,'cancel')
                 return {'status':'ok','data':{'task':'cancelled'}}
             refs=[*args['entity_refs'],*(ref for item in args['requirements'] for ref in item['entity_refs'])]
             require(all(ref in task.entities for ref in refs),'query_entity_mismatch')
             require(bool(args['goal'].strip()) and bool(args['requirements']),'tool_arguments_invalid')
             require(all(item['fields'] or item['knowledge'] for item in args['requirements']),'tool_arguments_invalid')
+            if any(not item['knowledge'] or binding['chunk_id'] not in task.knowledge_chunks
+                   or binding['entity_ref'] not in (item['entity_refs'] or [''])
+                   for item in args['requirements'] for binding in item.get('evidence', ())):
+                return {'status':'unissued_evidence','retryable':True,
+                        'data':'每项只能关联本轮已读的 chunk_id 和该项指定的对象。'}
             task.goal=args['goal'];task.targets=args['entity_refs'];task.requirements=args['requirements']
             self.task_event(work,'set')
             return {'status':'ok','data':task.context()}
@@ -1319,6 +1326,8 @@ class ChatAgent:
         leases=tuple(snapshot.pages[work.anchor.page].evidence) if work.anchor else ()
         runtime.check(work,deadline,leases)
         seen={}
+        knowledge_results={}
+        knowledge_cache={}
         output_ids={}
         operations=0
         tool_events=0
@@ -1369,10 +1378,12 @@ class ChatAgent:
         if self.story and not (story_fact or story_premise):
             registry['story_search']=Tool('story_search','检索已发布剧情场景；query可改写或翻译。返回来源层级和版本，候选并非完整原文；按handle继续读前后文。',
                 obj({'query':string(300),'filters':obj({k:string(100) for k in ('work','source_kind','character','source_id','chapter')})},('query',)),'story')
+        if self.story and not story_premise and (not story_fact or explicit_text):
             registry['story_read']=Tool('story_read','读取本轮已返回的剧情handle及前后场景；未知或撤回不可猜测。',
                 obj({'handle':string(200),'before':{'type':'integer','minimum':0,'maximum':2},'after':{'type':'integer','minimum':0,'maximum':2}},('handle',)),'story')
             trace_evidence('story_registry','registered')
         story_handles={}
+        fact_windows=set()
         story_tools_prepared=set()
         def evidence_reply(text,status='success'):
             text=self.proactive.decision(work,json.dumps(dict(participation='reply',text=text),ensure_ascii=False))
@@ -1470,11 +1481,20 @@ class ChatAgent:
             status = 'source_unavailable'
             if story_fact:
                 if self.story:
-                    search_status, result = await finish_thread(self.read_story_fact, source_question)
+                    if explicit_text:
+                        search_status, result = await finish_thread(partial(self.read_story_fact, source_question,
+                            tool_limit=self.budget.tool_calls, read_deadline=deadline-self.budget.final_seconds))
+                    else:
+                        search_status, result = await finish_thread(self.read_story_fact, source_question)
                     trace_evidence('story_search', search_status)
+                    if search_status=='budget_exhausted' or result and result['status']=='budget_exhausted':
+                        status = 'budget_exhausted'
+                        local_text = quote_prefix+'这次没能读完所需的剧情资料。'
                     if result is not None:
                         trace_evidence('story_read', result['status'])
                         if result['status']=='ok':
+                            if explicit_text:
+                                operations = result.pop('_operations')
                             evidence = {'story_evidence':result}
                 else:
                     trace_evidence('story_registry', 'story_not_configured')
@@ -1521,7 +1541,10 @@ class ChatAgent:
                     else:
                         evidence = {'just_evidence':result}
             runtime.check(work, deadline, leases)
+            evidence_in_context = False
             if evidence is not None:
+                unread = result.pop('unread_candidates', []) if story_fact else []
+                context_handles = result.pop('context_handles', []) if story_fact else []
                 entry = {'role':'user','content':json.dumps(evidence,ensure_ascii=False)}
                 if runtime.input_bound(work, [*messages,entry], []) <= work.model_snapshot.profile.max_input_tokens-1024:
                     if story_fact:
@@ -1531,15 +1554,32 @@ class ChatAgent:
                     else:
                         work.knowledge_scope = scope
                         work.knowledge_scope_leases = proofs
-                        work.chat_task.knowledge = True
                     messages.append(entry)
                     force_final = True
+                    evidence_in_context = True
+                    if story_fact and explicit_text and (unread or context_handles):
+                        registry = {'story_read':registry['story_read']}
+                        details = dict(result, unread_candidates=unread, context_handles=context_handles)
+                        optional_entry = {'role':'user','content':json.dumps({'story_evidence':details},ensure_ascii=False)}
+                        guide = {'role':'system','content':'证据已经足够就直接回答。有具体缺项才读 unread_candidates 的对应章节，'
+                                 '或用 context_handles 补读紧邻上下文。候选标题不能作为已读正文引用。'}
+                        if (operations < self.budget.tool_calls and self.budget.model_calls > 1
+                                and runtime.input_bound(work,[*messages[:-1],optional_entry,guide],[registry['story_read'].wire()])
+                                <= work.model_snapshot.profile.max_input_tokens-2048):
+                            messages[-1:] = [optional_entry,guide]
+                            story_handles.update((handle,None) for handle in result['evidence_read'])
+                            story_handles.update((row['handle'],None) for row in unread)
+                            fact_windows.update((handle,0,0) for handle in result['evidence_read'])
+                            force_final = False
                 else:
                     if story_fact:
                         trace_evidence('story_read', 'budget_exhausted')
+                        if explicit_text:
+                            status = 'budget_exhausted'
+                            local_text = quote_prefix+'这次没能读完所需的剧情资料。'
                     if proactive_evidence:
                         return skip_proactive_evidence('proactive_evidence_budget_exhausted',reason='tool_result_input_budget')
-            if not force_final:
+            if not evidence_in_context:
                 if proactive_evidence:
                     return replace(evidence_reply(local_text,status),evidence=leases,evidence_deadline=work.content_deadline)
                 if retain_turn:
@@ -1548,10 +1588,19 @@ class ChatAgent:
                                      evidence=leases,evidence_deadline=work.content_deadline if leases else None)
             runtime.check(work, deadline, leases)
         try:
-            if work.model_snapshot.profile.provider!='deepseek':
+            # A pre-read fact can already be answered. Keep its final permit
+            # available if the optional tool-enabled request cannot be afforded.
+            optional_story = story_fact and explicit_text and not force_final
+            if work.model_snapshot.profile.provider!='deepseek' or optional_story:
                 require(not staged or self.budget.model_calls>=2,'model_attempt_limit')
-                final_attempt=uuid.uuid4().hex
-                runtime.reserve(work,final_attempt,user,group,work.model_snapshot.profile.max_input_tokens)
+                candidate=uuid.uuid4().hex
+                try:
+                    runtime.reserve(work,candidate,user,group,work.model_snapshot.profile.max_input_tokens)
+                    final_attempt = candidate
+                except ModelError as exc:
+                    if not optional_story or str(exc) not in ('quota_exceeded','primary_budget_exceeded'): raise
+                    # The actual closing body may still fit without a maximum-size hold.
+                    force_final = True
                 if staged:
                     # Distinct D/G holds use the same rows at consumption. Both
                     # count against service, group and daily limits before HTTP.
@@ -1591,7 +1640,7 @@ class ChatAgent:
                     if proactive_evidence and required and str(exc) in ('quota_exceeded','primary_budget_exceeded'):
                         return skip_proactive_evidence('proactive_evidence_budget_exhausted')
                     if str(exc) not in ('quota_exceeded','primary_budget_exceeded') or final or final_attempt is None: raise
-                    if str(exc)=='primary_budget_exceeded' and work.model_attempts==0 and not staged:raise
+                    if str(exc)=='primary_budget_exceeded' and work.model_attempts==0 and not (staged or optional_story):raise
                     # No HTTP/permit has started on a failed reserve. Consume the
                     # already held final request instead of another retrieval.
                     final=True
@@ -1622,11 +1671,11 @@ class ChatAgent:
                         return PreparedReply(quote_prefix+f'{region}{subsystem or ""}{field}我不知道。',
                                              business_status='source_unavailable')
                     coverage=work.chat_task.coverage()
-                    if (work.chat_task.goal and coverage['status']!='completed' and not coverage_checked and not final
+                    if (work.chat_task.goal and not story_fact and coverage['status']!='completed' and not coverage_checked and not final
                             and work.model_attempts<self.budget.model_calls-(2 if staged else 1)):
                         coverage_checked=True
                         messages.append({'role':'system','content':'收束前实际覆盖检查：'+json.dumps(coverage,ensure_ascii=False)+
-                            '。继续读取仍缺少的字段；若来源确实没有，直接回答已查部分并说明具体缺项，不声称已全部查完。'})
+                            '。按缺项补读字段或知识。已有正文支持的项可直接作答，来源没有的项说明缺口，不重复检索。'})
                         continue
                     if staged:
                         decision=self.proactive.parse_staged_decision(result.text)
@@ -1713,6 +1762,8 @@ class ChatAgent:
                         operations+=1
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
                                                          registry=active_registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision,
+                                                         fact_windows=fact_windows if story_fact and explicit_text else None,
+                                                         knowledge_cache=knowledge_cache if explicit_text and work.chat_task.goal and not mechanic else None,
                                                          meta_question=meta_question,evidence_route=route,just_card=just_card,
                                                          mechanic_server=mechanic_server if mechanic else None,
                                                          activity_questions=activity_questions)
@@ -1721,6 +1772,16 @@ class ChatAgent:
                     knowledge_lease=output.pop('_knowledge_lease',None)
                     knowledge_leases=output.pop('_knowledge_leases',())
                     knowledge_context=output.pop('_knowledge_context',None)
+                    proofs = (knowledge_lease,) if knowledge_lease else knowledge_leases
+                    chunk_ids = {chunk.chunk_id for proof in proofs for chunk in proof.chunks} if task_enabled else set()
+                    evidence_key = None
+                    if explicit_text and work.chat_task.goal and not mechanic and chunk_ids:
+                        evidence_key = frozenset((proof.scope, proof.approved_set_revision, chunk.key,
+                                                  chunk.chunk_id, chunk.chunk_sha256)
+                                                 for proof in proofs for chunk in proof.chunks)
+                        if evidence_key in knowledge_results:
+                            output = {'status':'already_visible','previous_call':knowledge_results[evidence_key],
+                                      'note':'资料范围、版本和片段均与前次相同。结合已有正文回答，或针对缺项改查。'}
                     tool_message={'role':'tool','tool_call_id':call.id,'content':json.dumps(output,ensure_ascii=False)}
                     projected=[*messages,tool_message,*([image_input] if image_input else [])]
                     if runtime.input_bound(work,projected,[])>work.model_snapshot.profile.max_input_tokens-1024:
@@ -1751,8 +1812,11 @@ class ChatAgent:
                         activity_result=output['status']
                         force_final=True
                     if call.name=='knowledge_search':
+                        if task_enabled and output['status'] in ('ok','already_visible'):
+                            work.chat_task.knowledge_chunks.update(chunk_ids)
                         if output['status']=='ok':
-                            work.chat_task.knowledge=True
+                            if evidence_key is not None:
+                                knowledge_results[evidence_key] = call.id
                             if (mechanic and not mechanic_passage and knowledge_scope is not None
                                     and knowledge_scope.server==mechanic_server
                                     and not json.loads(call.arguments).get('followup')):
@@ -1826,37 +1890,55 @@ class ChatAgent:
                 self.audit(self.proactive.settle_cost,work)
             messages.clear()
 
-    def read_story_fact(self, question):
+    def read_story_fact(self, question, *, tool_limit=None, read_deadline=float('inf')):
+        if (tool_limit is not None and tool_limit < 2) or time.monotonic() >= read_deadline:
+            return 'budget_exhausted', None
         try:
             matches = self.story.search(question, limit=3, facts_only=True)
         except (StoryError, OSError):
             return 'source_unavailable', None
         if not matches['items']:
             return matches['status'], None
-        handles = {item['handle']:item['source_kind'] for item in matches['items']}
         try:
-            evidence = self.read_story_evidence(handles)
+            evidence = self.read_story_evidence(matches['items'], tool_limit, read_deadline)
         except (StoryError, OSError):
             evidence = {'status':'source_unavailable'}
-        return matches['status'], evidence if evidence['status'] == 'ok' else {'status':'source_unavailable'}
+        if evidence['status'] in ('ok','budget_exhausted'):
+            return matches['status'], evidence
+        return matches['status'], {'status':'source_unavailable'}
 
-    def read_story_evidence(self, handles):
-        primary, kind = next(iter(handles.items()))
+    def read_story_evidence(self, candidates, tool_limit, read_deadline):
+        if time.monotonic() >= read_deadline:
+            return {'status':'budget_exhausted'}
+        primary = candidates[0]['handle']
         result = self.story.read(primary, before=0, after=0)
         if result['status']!='ok':
             return result
         result['evidence_read'] = [primary]
-        companion = next((handle for handle, layer in handles.items() if layer!=kind), None)
-        if companion is not None:
+        operations = 2
+        context_handles = [primary] if result.get('previous_handle') or result.get('next_handle') else []
+        companion = next((row['handle'] for row in candidates if row['source_kind']!=candidates[0]['source_kind']), None)
+        if companion is not None and (tool_limit is None or operations < tool_limit and time.monotonic() < read_deadline):
             supporting = self.story.read(companion, before=0, after=0)
+            operations += 1
             if supporting['status']!='ok':
                 return supporting
             combined = [*result['scenes'], *supporting['scenes']]
             if len(json.dumps(combined,ensure_ascii=False).encode())<=16000:
                 result['scenes'] = combined
                 result['evidence_read'].append(companion)
+                if supporting.get('previous_handle') or supporting.get('next_handle'):
+                    context_handles.append(companion)
             else:
                 result['coverage_note'] = '另一来源层级的场景未加入本轮正文，不能引用为已读依据。'
+        if tool_limit is not None:
+            result.pop('previous_handle',None)
+            result.pop('next_handle',None)
+            unread = [{key:row[key] for key in ('handle','source_kind','title','locator')}
+                      for row in candidates if row['handle'] not in result['evidence_read']]
+            result['_operations'] = operations
+            result['unread_candidates'] = unread
+            result['context_handles'] = context_handles
         return result
 
     async def load_activity_evidence(self, work, questions):
@@ -1925,7 +2007,7 @@ class ChatAgent:
             lines.append(f"{lead}{item['region']}《{value['title']}》{when}（北京时间）{item['field']}。")
         return '\n'.join(lines), 'success'
 
-    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card='',mechanic_server=None,activity_questions=()):
+    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card='',mechanic_server=None,activity_questions=(),fact_windows=None,knowledge_cache=None):
         runtime=self.runtime
         try:
             tool,args=validate_call(call,self.tools if registry is None else registry)
@@ -1977,10 +2059,23 @@ class ChatAgent:
                     output=await finish_thread(partial(self.story.search,args['query'],args.get('filters')))
                     story_handles.update((item['handle'],item['source_kind']) for item in output.get('items',[]))
                 else:
+                    if fact_windows is not None and args['handle'] not in story_handles:
+                        return {'status':'story_handle_unissued','retryable':True,
+                                'note':'只能从本轮剧情候选或已读场景的 handle 补读。'},leases
                     require(args['handle'] in story_handles,'story_handle_unissued')
-                    output=await finish_thread(partial(self.story.read,args['handle'],
-                        before=args.get('before',1),after=args.get('after',1)))
-                    story_handles.update((output[key],None) for key in ('previous_handle','next_handle') if output.get(key))
+                    handle, before, after = args['handle'], args.get('before',1), args.get('after',1)
+                    if fact_windows is not None and (handle,before,after) in fact_windows:
+                        return {'status':'already_visible','note':'此场景范围已读，可据已有正文作答或补读缺少的前后文。'},leases
+                    output=await finish_thread(partial(self.story.read,handle,before=before,after=after))
+                    if fact_windows is None:
+                        story_handles.update((output[key],None) for key in ('previous_handle','next_handle') if output.get(key))
+                    elif output.get('status')=='ok':
+                        fact_windows.add((handle,before,after))
+                        # Fact-search candidates are the anchors. Adjacent lines
+                        # supply context; expression examples cannot supply facts.
+                        output['scenes'] = [row for row in output['scenes'] if not row['scene_id'].startswith('taki-expression-guide-')]
+                        output.pop('previous_handle',None)
+                        output.pop('next_handle',None)
                 if output.get('status')=='ok':
                     version=(output['source_revision'],output['revocation_revision'])
                     work.story_versions=tuple(dict.fromkeys((*work.story_versions,version)))
@@ -2081,7 +2176,7 @@ class ChatAgent:
                     # it does not turn their unknown version into a verified one.
                     scopes=(scope,replace(scope,version=context_version))
                     await finish_thread(knowledge.observe)
-                    cache=self.proactive.controller.knowledge_leases(work.proactive) if work.proactive is not None else None
+                    cache=self.proactive.controller.knowledge_leases(work.proactive) if work.proactive is not None else knowledge_cache
                     key=(args.get('query') or question,scopes,knowledge.approved_set_revision,work.proactive_authority)
                     new_leases=cache.get(key) if cache is not None else None
                     if new_leases is not None and not await finish_thread(partial(knowledge.validate_current,new_leases)):
@@ -2111,7 +2206,7 @@ class ChatAgent:
                         '_knowledge_scope':scope,'_knowledge_leases':new_leases},leases
                 await finish_thread(knowledge.observe)
                 runtime.check(work,turn_deadline,leases)
-                cache=self.proactive.controller.knowledge_leases(work.proactive) if work.proactive is not None else None
+                cache=self.proactive.controller.knowledge_leases(work.proactive) if work.proactive is not None else knowledge_cache
                 key=(args.get('query') or question,scope,knowledge.approved_set_revision,work.proactive_authority)
                 lease=cache.get(key) if cache is not None else None
                 if lease is not None and not await finish_thread(partial(knowledge.validate_current,(lease,))):
