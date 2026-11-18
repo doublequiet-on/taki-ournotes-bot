@@ -1,0 +1,97 @@
+[
+  {
+    "source": "af66d87caad0caa24e417fdfe1867c921c682741",
+    "compared_to": "e72eb9cbe1557966e8121034c6aca870d1f5cf2d",
+    "development_totals": {
+      "pass": 13,
+      "fail": 4,
+      "undetermined": 3
+    },
+    "development_changes": [],
+    "holdout_totals": {
+      "pass": 4,
+      "fail": 4
+    },
+    "holdout_changed_rows": 0
+  },
+  {
+    "source": "5cf1169e3bf98d4e56357a519b4ac95288580581",
+    "compared_to": "e72eb9cbe1557966e8121034c6aca870d1f5cf2d",
+    "development_totals": {
+      "pass": 15,
+      "fail": 2,
+      "undetermined": 3
+    },
+    "development_changes": [
+      {
+        "id": "D12",
+        "before": {
+          "id": "D12",
+          "observed": {
+            "code": "unavailable",
+            "index": "index_pending",
+            "chunks": 0,
+            "valid": false,
+            "matched": [
+              false,
+              false
+            ]
+          },
+          "status": "fail",
+          "reason": "AssertionError: 'unavailable' != 'ok'"
+        },
+        "after": {
+          "id": "D12",
+          "observed": {
+            "code": "ok",
+            "index": "ready",
+            "chunks": 1,
+            "valid": true,
+            "matched": [
+              true,
+              true
+            ]
+          },
+          "status": "pass"
+        }
+      },
+      {
+        "id": "D13",
+        "before": {
+          "id": "D13",
+          "observed": {
+            "code": "unavailable",
+            "index": "ready",
+            "chunks": 0,
+            "valid": false,
+            "matched": [
+              false,
+              false
+            ]
+          },
+          "status": "fail",
+          "reason": "AssertionError: 'unavailable' != 'ok'"
+        },
+        "after": {
+          "id": "D13",
+          "observed": {
+            "code": "ok",
+            "index": "ready",
+            "chunks": 1,
+            "valid": true,
+            "matched": [
+              true,
+              true
+            ]
+          },
+          "status": "pass"
+        }
+      }
+    ],
+    "holdout_totals": {
+      "pass": 6,
+      "fail": 2
+    },
+    "holdout_changed_rows": 2
+  }
+]
