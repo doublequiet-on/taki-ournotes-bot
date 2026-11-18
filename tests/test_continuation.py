@@ -1206,6 +1206,27 @@ class ProactiveControllerTests(unittest.TestCase):
         self.now[0] += 1.5
         return self.controller.candidate(scope or self.a, reserve_cost_micro=reserve)
 
+    def test_lightweight_candidate_survives_expiration_of_unused_history(self):
+        self.observe('old')
+        self.now[0] = 892
+        self.observe('current')
+        self.now[0] += 1.6
+        candidate = self.controller.candidate(self.a, reserve_cost_micro=1, lightweight=True)
+        self.assertEqual([row.message_id for row in candidate.messages], ['current'])
+        self.now[0] += 9
+        self.assertTrue(self.controller.valid(candidate))
+        self.observe('next')
+        self.assertFalse(self.controller.valid(candidate))
+
+    def test_candidate_loses_permission_when_a_used_source_expires(self):
+        self.observe('old')
+        self.now[0] = 892
+        self.observe('current')
+        candidate = self.ready()
+        self.assertIn('old', [row.message_id for row in candidate.messages])
+        self.now[0] += 9
+        self.assertFalse(self.controller.valid(candidate))
+
     def test_topic_context_restores_specific_but_not_generic_same_speaker_anchor(self):
         from ournotes_bot.application.proactive_chat import select_topic_context
         from ournotes_bot.domain.chat import ChatMessage

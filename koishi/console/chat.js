@@ -31,6 +31,9 @@ export function conversationSettings(s){
    !settings?h('p','正在读取本群交流设置。'):h('div',[
      typeof settings.hermes_enabled==='boolean'&&h('div',[
        h('label',{class:'toggle'},[h('input',{type:'checkbox','aria-label':'启用 Hermes 聊天',checked:settings.hermes_enabled,disabled:disabled||(!value?.hermes_available&&!settings.hermes_enabled),onChange:e=>{settings.hermes_enabled=e.target.checked;mark();}}),'本群使用 Hermes 聊天']),
+       value?.settings?.hermes_enabled && 'hermes_standby' in value && h('p',value.hermes_standby
+           ? `Hermes 已配置预热 · 点名／续聊就绪 ${value.hermes_standby.dialogue} · 主动接话就绪 ${value.hermes_standby.proactive}`
+           : 'Hermes 按请求启动进程'),
        h('p',{class:'field-note'},value?.hermes_available?'应用于点名、续聊和主动接话。切换并保存会结束本群正在进行的聊天轮次。':'Hermes 当前不可用。已启用的群可以关闭开关，切回原聊天路径。')]),
      h('label',{class:'toggle'},[h('input',{type:'checkbox','aria-label':'启用免 @ 续聊',checked:settings.followup_enabled,disabled,onChange:e=>{settings.followup_enabled=e.target.checked;mark();}}),'免 @ 续聊']),
      h('p','用户主动找 Taki 聊过后，可直接继续说。Taki 会结合上下文判断是否仍在和她交流。'),

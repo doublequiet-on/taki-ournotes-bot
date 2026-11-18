@@ -149,7 +149,8 @@ class ModelRuntime:
         from .hermes_chat import HermesChat
         self.hermes=HermesChat(getattr(backend.settings,'hermes_python',None),
                                getattr(backend.settings,'hermes_runtime_dir',None),
-                               getattr(backend.settings,'hermes_pilot_group',''))
+                               getattr(backend.settings,'hermes_pilot_group',''),
+                               compact=getattr(backend.settings,'hermes_compact_standby',False))
         self.hermes_switch=asyncio.Lock()
         self.task=None
         self.config=ModelConfiguration(getattr(backend.settings,'ai_profile_file',None),getattr(backend.settings,'query_ai_api_key',''),
@@ -593,7 +594,7 @@ class ModelRuntime:
             except ServiceError as exc:
                 self.proactive_charge_denied(work,exc)
             started=True
-            if getattr(work,'hermes_pilot',False):
+            if getattr(work,'hermes_chat',False):
                 work.hermes_provider_started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
             return await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
