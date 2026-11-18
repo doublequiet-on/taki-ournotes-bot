@@ -272,9 +272,10 @@ class ChapterLookup:
     sources: frozenset[str]
     numbers: frozenset[int]
     cast: frozenset[str]
+    version: tuple[str, int]
 
     @classmethod
-    def for_request(cls, question, rewritten, scenes):
+    def for_request(cls, question, rewritten, scenes, version):
         if '章' not in question:
             return None
         numbers = frozenset(chapter_numbers(question))
@@ -285,7 +286,7 @@ class ChapterLookup:
         subject, cast = chapter_subject_query(rewritten, (name for scene in scenes for name in scene['participants']))
         if not subject or len(subject)>300:
             return None
-        return cls(subject, frozenset(scene['source_id'] for scene in scenes), numbers, cast)
+        return cls(subject, frozenset(scene['source_id'] for scene in scenes), numbers, cast, version)
 
     def search(self, story, args):
         filters = args.get('filters', {})
@@ -297,13 +298,14 @@ class ChapterLookup:
         if (source not in self.sources or not 0<len(chapter)<=100
                 or self.numbers and not (target and target<=self.numbers)):
             return {'status':'story_scope_mismatch','items':[]}
-        result = story.search(self.subject, {'source_id':source,'chapter':chapter}, limit=3, facts_only=True)
+        result = story.search(self.subject, {'chapter':chapter}, limit=3, facts_only=True,
+                              pinned_source_id=source, required_participants=self.cast)
+        require((result.get('source_revision'), result.get('revocation_revision')) == self.version, 'story_revoked')
         # Only a later version-bound read can supply evidence from this chapter.
         items = [{key:row[key] for key in ('handle','source_id','source_kind','title','locator')}
-                 for row in result['items'] if self.cast.issubset(row['participants'])]
-        status = 'no_results' if result['status']=='ok' and not items else result['status']
-        return {'status':status, 'items':items, **{key:result[key] for key in ('source_revision','revocation_revision')
-                                                   if key in result}}
+                 for row in result['items']]
+        return {'status':result['status'], 'items':items, 'source_revision':self.version[0],
+                'revocation_revision':self.version[1]}
 
 
 def research_tools():
@@ -1424,6 +1426,8 @@ class ChatAgent:
                 obj({'handle':string(200),'before':{'type':'integer','minimum':0,'maximum':2},'after':{'type':'integer','minimum':0,'maximum':2}},('handle',)),'story')
             trace_evidence('story_registry','registered')
         story_handles={}
+        pending_chapter_handles={}
+        pending_knowledge_chunks=set()
         fact_windows=set()
         chapter_lookup=None
         story_tools_prepared=set()
@@ -1707,6 +1711,13 @@ class ChatAgent:
                     result=await runtime.attempt(work,messages,[],user,group,deadline,leases,reservation=reservation)
                 finally:
                     work.proactive_generation=False
+                # These tool results were in this model input. Sibling calls in
+                # one assistant response cannot cite each other's future output.
+                work.chat_task.knowledge_chunks.update(pending_knowledge_chunks)
+                pending_knowledge_chunks.clear()
+                for handle, layer in pending_chapter_handles.items():
+                    story_handles.setdefault(handle, layer)
+                pending_chapter_handles.clear()
                 if proactive_evidence and result.tool_calls:
                     require(len(result.tool_calls)==1,'model_protocol_error')
                 if not result.tool_calls:
@@ -1813,6 +1824,10 @@ class ChatAgent:
                             or work.proactive is not None and not self.proactive.controller.take_tool(work.proactive,self.budget.tool_calls)):
                         output={'status':'budget_exhausted','retryable':False}
                         force_final=True
+                    elif (chapter_lookup and call.name=='story_search' and call.name in active_registry
+                          and operations+2>self.budget.tool_calls):
+                        # A sibling call may have spent a slot after the tool was advertised.
+                        output={'status':'budget_exhausted','reason':'chapter_read_requires_slot','retryable':False}
                     else:
                         operations+=1
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
@@ -1823,6 +1838,8 @@ class ChatAgent:
                                                          meta_question=meta_question,evidence_route=route,just_card=just_card,
                                                          mechanic_server=mechanic_server if mechanic else None,
                                                          activity_questions=activity_questions)
+                    if call.name=='research_task' and output.get('data')=={'task':'cancelled'}:
+                        pending_knowledge_chunks.clear()
                     image_input=output.pop('_image_input',None)
                     knowledge_scope=output.pop('_knowledge_scope',None)
                     knowledge_lease=output.pop('_knowledge_lease',None)
@@ -1869,7 +1886,7 @@ class ChatAgent:
                         force_final=True
                     if call.name=='knowledge_search':
                         if task_enabled and output['status'] in ('ok','already_visible'):
-                            work.chat_task.knowledge_chunks.update(chunk_ids)
+                            pending_knowledge_chunks.update(chunk_ids)
                         if output['status']=='ok':
                             if evidence_key is not None:
                                 knowledge_results[evidence_key] = call.id
@@ -1896,7 +1913,9 @@ class ChatAgent:
                         work.knowledge_context=saved
                         work.knowledge_target=target
                     seen[call.id]=((call.name,call.arguments),output)
-                    if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
+                    if (output['status'] in ('budget_exhausted','quota_exceeded')
+                            and output.get('reason')!='chapter_read_requires_slot'):
+                        force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
                     provenance=output.get('data') if isinstance(output.get('data'),dict) else {}
                     tool_events+=1
@@ -1917,6 +1936,8 @@ class ChatAgent:
                         self.runtime.backend.diagnostics.chat_event(work.request.request_id,'research',self.runtime.backend.clock(),**data)
                     self.proactive.trace(work,'tool',name=call.name if call.name in registry else 'unregistered',status=output['status'])
                     messages.append(tool_message)
+                    if chapter_lookup and call.name=='story_search' and output['status']=='ok':
+                        pending_chapter_handles.update((row['handle'],row['source_kind']) for row in output['items'])
                     if call.name=='story_read' and output['status']=='ok':
                         trace_evidence('story_read','result_in_context')
                     if image_input:messages.append(image_input)
@@ -1961,7 +1982,9 @@ class ChatAgent:
             evidence = {'status':'source_unavailable'}
         if evidence['status'] in ('ok','budget_exhausted'):
             if tool_limit is not None and evidence['status']=='ok':
-                evidence['_chapter_lookup'] = ChapterLookup.for_request(question,matches['rewritten_query'],evidence['scenes'])
+                version = (evidence['source_revision'], evidence['revocation_revision'])
+                evidence['_chapter_lookup'] = ChapterLookup.for_request(question,matches['rewritten_query'],
+                                                                         evidence['scenes'],version)
             return matches['status'], evidence
         return matches['status'], {'status':'source_unavailable'}
 
@@ -2119,8 +2142,6 @@ class ChatAgent:
                         story_handles.update((item['handle'],item['source_kind']) for item in output.get('items',[]))
                     else:
                         output=await finish_thread(chapter_lookup.search,self.story,args)
-                        for item in output['items']:
-                            story_handles.setdefault(item['handle'],item['source_kind'])
                 else:
                     if fact_windows is not None and args['handle'] not in story_handles:
                         return {'status':'story_handle_unissued','retryable':True,

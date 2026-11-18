@@ -180,7 +180,8 @@ def _fact_score(scene, source, query, needles, groups, work, regions, episode, f
     return -covered, priority, -score, scene.scene_id
 
 
-def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sources=(),facts_only=False):
+def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sources=(),facts_only=False,
+                  pinned_source_id=None,required_participants=()):
     require(isinstance(query,str) and 0<len(query.strip())<=300,'story_query')
     require(type(limit) is int and 1<=limit<=10,'story_limit')
     filters={} if filters is None else filters
@@ -206,11 +207,14 @@ def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sourc
     else:
         rewritten,trace=rewrite(query,bundle.aliases)
     needles=terms(rewritten);excluded=set(excluded_sources)
+    required_participants=frozenset(required_participants)
     sources={source.source_id:source for source in bundle.sources}
     scored=[]
     for scene in bundle.scenes:
         source=sources[scene.source_id]
         if scene.source_id in excluded:continue
+        if pinned_source_id is not None and scene.source_id != pinned_source_id:continue
+        if not required_participants.issubset(scene.participants):continue
         # The published expression namespace contains original dialogue
         # examples. Those examples are useful for tone, never story evidence.
         if facts_only and scene.scene_id.startswith('taki-expression-guide-'):continue

@@ -107,12 +107,13 @@ class StoryService:
         bundle=self.current();withdrawals=self.revocations()
         return bundle is not None and bundle.revision==source_revision and withdrawals['revision']==revocation_revision
 
-    def search(self,query,filters=None,*,limit=6,facts_only=False):
+    def search(self,query,filters=None,*,limit=6,facts_only=False,pinned_source_id=None,required_participants=()):
         bundle=self.current()
         if bundle is None:return {'status':'not_available','source_revision':None,'items':[],'query_rewrites':[]}
         withdrawals=self.revocations()
         result=search_scenes(bundle,query,filters,limit=limit,excluded_sources=withdrawals['sources'],
-                             facts_only=facts_only)
+                             facts_only=facts_only,pinned_source_id=pinned_source_id,
+                             required_participants=required_participants)
         sources={source.source_id:source for source in bundle.sources}
         token=digest(withdrawals)[:16]
         items=[];retained=0
