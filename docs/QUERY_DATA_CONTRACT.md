@@ -48,7 +48,9 @@
 
 `domain/public_queries.PublicSnapshot` 保留body/fetched_at/resource/release原字段。新增：provider、game_region、resource_server、source_id、snapshot_id均为`str|None`，observed_ms/server_ms为`int|None`，age_seconds为`float|None`；normalization_version=`public/2`，source=`haneoka`，freshness三态同上，time_kind为unknown/source_observed/source_fetched/bridge_fetched。`fetched_at`是本机收到响应的epoch秒；`release`空字符串为未知，仅静态资源有release；`resource`沿用原路径或资源服用途，新消费者以resource_server区分jp/intl，不能当作游戏区。
 
-竞技场body.rows增加`position: int`（从请求first开始）、`rawRank: null`、`pointState: str`（value/source_zero/null/missing），原rank为可空显示名次，point为可空非负整数。不会用rank过滤位置窗口。默认1–20、连续最多100位置；上游最多返回start至start+99。profileId精确字符串，不转浮点数。源身份必须与请求相等。
+竞技场 `body.rows` 的 `position: int` 从上游请求的 `start` 开始。单个百名页内的请求使用该页起点，跨页使用用户指定的起点。上游最多返回 `start` 至 `start+99`，查询层按原请求位置截取。每行的 `rawRank` 固定为 null，`rank` 为可空显示名次，`point` 为可空非负整数，`pointState` 取 value/source_zero/null/missing。
+
+人数按已开放段位的积分门槛请求，可依目录的 `rank` 对各小段人数求和。榜单与人数的源身份均须与请求相等。公开 `profileId` 保留精确字符串。
 
 InfoAnswer/InfoView不新增平行状态结构；公开查询把来源与新鲜度放入rows/footer，备用正文通过同一视图生成。CardAnswer新增cache_state及cache_notice；SongAnswer.warning在未命中时也保留旧缓存提示。04仍需验证其实际成功图片/详情图片是否显示这些字段，不能用本包文字测试代替图片验收。
 

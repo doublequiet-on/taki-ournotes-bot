@@ -33,7 +33,7 @@ class MenuLimitsTests(unittest.TestCase):
         self.assertEqual(
             {item["name"] for item in PANEL_ITEMS},
             {"查谱面", "查曲", "查榜线", "查卡", "查留影卡", "查", "聊", "数据状态", "帮助", "介绍",
-             "继续", "详情", "查活动", "查卡池", "查角色", "查竞技场"},
+             "继续", "详情", "查活动", "查卡池", "查角色", "查激奏舞台", "查激奏榜线"},
         )
         for item in PANEL_ITEMS:
             self.assertLessEqual(display_width(item["name"]), 14)
@@ -45,14 +45,15 @@ class MenuLimitsTests(unittest.TestCase):
         self.assertLessEqual(len(names), 20)
         self.assertEqual(set(names), {
             "查曲", "查谱面", "查榜线", "查卡", "查留影卡", "查卡面",
-            "查留影卡面", "查", "聊", "数据状态", "查竞技场",
-            "帮助", "介绍",
+            "查留影卡面", "查", "聊", "数据状态", "查激奏舞台", "查激奏榜线",
+            "帮助",
             "继续", "详情", "查活动", "查卡池", "查角色",
         })
         for item in GROUP_PANEL_ITEMS:
             self.assertIn("/" + item["name"], HELP_TEXTS["zh"])
             self.assertLessEqual(display_width(item["name"]), 14)
             self.assertLessEqual(display_width(item["desc"]), 30)
+        self.assertIn("/介绍", HELP_TEXTS["zh"])
 
 
 class PanelUpdateTests(unittest.IsolatedAsyncioTestCase):

@@ -13,19 +13,17 @@ from dataclasses import dataclass, replace
 from ..sources.moenotes_events import (BoardSnapshot, EventSnapshot, EventSong, SERVERS, SourceError,
                                       display_time, zone_label, event_ranking_format)
 from .entity_lexicon import scoped_song_matches
+from .ranking_positions import KEY_POSITIONS as NODES, RANK_PART, nearby_window
 from ..sources.cutoff_history import HistoryView
 from ..domain.query_cancellation import thread_cancel_event
 from ..domain.total_rankings import TotalRankingSnapshot
 
-NODES = (1, 2, 3, 10, 100)
 HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。总榜可用性取决于来源。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地最近一次有效观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
 FORBIDDEN = re.compile(r"预测|預測|推荐|推薦|配队|配隊|编成|攻略|代练|代肝|账号|帐号|賬號|最强|怎么打|如何打|抽卡建议")
 MARKER = re.compile(r"榜线|榜線|档线|檔線|歌曲榜|(?:前\s*[+-]?\d+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?\s*线).*?(?:多少|分)|T\d+.*多少", re.I)
-_NUMBER = r'[tT]?[+-]?\d+(?:\.\d+)?'
-_RANK_PART = re.compile(rf'(?<!\S)({_NUMBER})(?:\s*[-—–~～到]\s*({_NUMBER}))?(?!\S)')
 _SONG_NUMBER = re.compile(r'(?:歌曲|歌)([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)$|第([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)首$')
 _EVENT_ID_PREFIX = r'id\s*(?:[=:]\s*)?'
 _EVENT_ID = re.compile(_EVENT_ID_PREFIX + r'([+-]?\d+(?:\.\d+)?)', re.I)
@@ -64,7 +62,8 @@ class CutoffRequest:
             if type(target_rank) is not int or not 1 <= target_rank <= 100:
                 error, values = error or "名次必须为 1～100 的整数。", ()
             else:
-                values = tuple(range(max(1, target_rank - 10), min(100, target_rank + 10) + 1))
+                first, last = nearby_window(target_rank, 100)
+                values = tuple(range(first, last + 1))
         elif mode == "range":
             if len(range_bounds) != 2 or any(type(r) is not int or not 1 <= r <= 100 for r in range_bounds):
                 error, values = error or "区间两端必须为 1～100 的整数。", ()
@@ -145,10 +144,10 @@ def _song_integer(raw):
 def _rank_selection(request, text):
     """Extract complete rank groups; never apply the discrete limit to a window."""
     normalized = re.sub(r'[,，]', ' ', text)
-    matches = tuple(_RANK_PART.finditer(normalized))
+    matches = tuple(RANK_PART.finditer(normalized))
     if not matches:
         return request, text.strip()
-    remainder = _RANK_PART.sub(' ', normalized)
+    remainder = RANK_PART.sub(' ', normalized)
     remainder = re.sub(r'\s+', ' ', remainder).strip()
     ranges, points = [], []
     for match in matches:

@@ -1446,13 +1446,18 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_public_arena_grammar_stays_local_for_all_query_aliases(self):
         from ournotes_bot.query.contracts.info import InfoAnswer
         answer = InfoAnswer('合成竞技场人数：0')
-        for seq, alias in enumerate(('/查', '/问', '/ask'), 1):
+        cases = (
+            ('/查 MyGO竞技场人数', 'MyGO 人数', {}),
+            ('/问 MyGO 激奏舞台 排期', 'MyGO 排期', {'command': '查激奏舞台'}),
+            ('/ask hk MyGO激奏榜线 T100多少', 'hk MyGO T100', {'command': '查激奏榜线'}),
+        )
+        for seq, (question, arguments, options) in enumerate(cases, 1):
             with patch('ournotes_bot.query.public_queries.execute_arena', return_value=answer) as execute:
-                plan, attempts = await self.prepare_native(alias + ' MyGO竞技场人数', seq=seq)
+                plan, attempts = await self.prepare_native(question, seq=seq)
             self.assertEqual(attempts, [])
             self.assertEqual(plan['parts'][0]['business_status'], 'success')
             self.assertEqual(plan['parts'][0]['text'], answer.text)
-            execute.assert_called_once_with('MyGO 人数', self.repo)
+            execute.assert_called_once_with(arguments, self.repo, **options)
             self.event(plan, 'intent'); self.event(plan, 'ack')
         self.client.request.assert_not_awaited()
 

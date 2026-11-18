@@ -498,6 +498,119 @@ class ActivityAnnouncementTests(unittest.TestCase):
 
 class PublicQueryContractTests(unittest.TestCase):
 
+    def test_arena_stage_and_cutoff_have_distinct_modes_and_preserve_rank_scope(self):
+        from types import SimpleNamespace
+        from ournotes_bot.query.public_queries import execute_arena, parse_arena
+        from ournotes_bot.domain.public_queries import PublicQueryError
+
+        for text, expected in [
+            ('MyGO', (1, 100, (1, 2, 3, 10, 100))),
+            ('MyGO 榜单', (1, 20, ())),
+            ('MyGO T1000', (1000, 1000, (1000,))),
+            ('MyGO 50', (40, 60, ())),
+            ('MyGO 20 - 40', (20, 40, ())),
+            ('T100 T10 Ｔ１ MyGO 仅数值', (1, 100, (1, 10, 100))),
+        ]:
+            with self.subTest(text=text):
+                request = parse_arena(text, command='查激奏榜线')
+                self.assertEqual((request.first, request.last, request.positions), expected)
+        for text in ('MyGO 2-1', 'MyGO 1-101', 'MyGO T1 T101', 'MyGO 人数 T1', 'MyGO 50 T100'):
+            with self.subTest(text=text), self.assertRaises(PublicQueryError):
+                parse_arena(text, command='查激奏榜线')
+
+        # A repository without a source also proves these errors never get to I/O.
+        repo = SimpleNamespace()
+        missing = execute_arena('hk 赛季=7 T100 仅数值', repo, command='查激奏榜线')
+        self.assertEqual(missing.status, 'invalid_arguments')
+        self.assertIn('/查激奏榜线 hk MyGO!!!!! 赛季=7 T100 仅数值', missing.text)
+        self.assertIn('/查激奏榜线', execute_arena('MyGO 人数', repo, command='查激奏舞台').text)
+        self.assertIn('/查激奏舞台', execute_arena('MyGO 排期', repo, command='查激奏榜线').text)
+
+    def test_arena_stage_rules_and_records_project_the_requested_snapshot(self):
+        import json
+        from types import SimpleNamespace
+        from ournotes_bot.query.public_queries import execute_arena
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+
+        old = {'startAt': 1000, 'endAt': 1999, 'musicType': 99, 'missions': [1, 2, 3]}
+        rules = [dict(old, startAt=i * 1000, endAt=i * 1000 + 999, musicType=i) for i in range(1, 6)]
+        rank = dict(id=1, name='新手1', rank=1, points=0, resetPoints=0, startAt=0)
+        ranks = [rank, dict(rank, id=2, name='新手2', points=50),
+                 dict(rank, id=3, name='青铜1', rank=2, points=100),
+                 dict(rank, id=4, name='青铜2', rank=2, points=200, startAt=3000)]
+        league = dict(id=7, bandId=1, name='MyGO', rules=rules, songs=[], ranks=ranks)
+        reward = {'name': '测试奖励', 'leagueId': 7, 'rankId': 1, 'count': 3, 'from': 0, 'to': 0}
+        season = dict(seasonId=7, title='测试赛季', startAt=1, endAt=30000, leagues=[league], dailyRewards=[reward])
+        identity = dict(server='intl', releaseId='r-' + 'e' * 20, sourceId='fixture')
+        calls = []
+
+        def fetch(url, *args):
+            calls.append(url)
+            if '/release?' in url:
+                self.assertIn('/servers/intl/', url)
+                data = dict(schema='haneoka-resource-release-identity-v1', **identity)
+            elif '/servers/intl/arena?' in url:
+                data = dict(schema='haneoka-arena-v1', identity=identity, entries={'7': season})
+            elif url.endswith('/tw/arena/seasons/7/leagues/1/ranking?start=1'):
+                scores = [dict(rank=i, point=101-i, name='fixture') for i in range(1, 100)]
+                scores.append(dict(rank=99, point=0, name='隐藏昵称', profileId='21234567890'))
+                data = dict(region='tw', seasonId='7', bandId='1', start=1, end=100, maxRank=200, rows=scores)
+            elif url.endswith('/tw/arena/seasons/7/leagues/1/population?thresholds=0%2C50%2C100'):
+                data = dict(region='tw', seasonId='7', bandId='1', maxRank=5,
+                            tiers=[dict(threshold=0, count=0), dict(threshold=50, count=3), dict(threshold=100, count=2)])
+            else:
+                self.fail('unexpected source request: ' + url)
+            return 200, json.dumps(data).encode(), {}
+
+        source = PublicQueries(fetch=fetch, clock=lambda: 1.5)
+        repo = SimpleNamespace(public_queries=source, capture_catalog=lambda: SimpleNamespace(source_snapshot=None))
+        overview = execute_arena('hk MyGO', repo, now=1.5, command='查激奏舞台')
+        self.assertEqual(overview.status, 'success')
+        self.assertIn('当前规则', overview.text)
+        self.assertIn('接下来的轮换', overview.text)
+        self.assertIn('08:00:04', overview.text)
+        self.assertNotIn('08:00:05', overview.text)
+        self.assertEqual(len(calls), 2)
+        reward_view = execute_arena('hk MyGO 段位与奖励', repo, now=1.5, command='查激奏舞台')
+        self.assertIn('积分门槛：0', reward_view.text)
+        self.assertIn('测试奖励 ×3', reward_view.text)
+        empty = execute_arena('hk MyGO 乐曲', repo, now=1.5, command='查激奏舞台')
+        self.assertEqual(empty.status, 'no_results')
+        self.assertIn('暂无已公开乐曲', empty.text)
+        values = execute_arena('hk MyGO T100 仅数值', repo, now=1.5, command='查激奏榜线')
+        self.assertEqual(values.status, 'success')
+        self.assertFalse(values.views)
+        self.assertIn('T100\n舞台积分（AP）：0', values.text)
+        self.assertNotIn('隐藏昵称', values.text)
+        self.assertEqual(len(calls), 3)
+        also_first = execute_arena('hk MyGO T1 T100', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('T100 · 显示名次 99', also_first.text)
+        self.assertEqual(len(calls), 3)
+        population = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertEqual(population.status, 'success')
+        self.assertIn('联赛上榜人数\n5', population.text)
+        self.assertIn('新手\n舞台积分 0–99 · 人数：3', population.text)
+        self.assertIn('青铜\n舞台积分 100+ · 人数：2', population.text)
+        self.assertNotIn('新手1', population.text)
+        divisions = execute_arena('hk MyGO 人数明细', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('新手1\n舞台积分 0–49 · 人数：0', divisions.text)
+        self.assertIn('新手2\n舞台积分 50–99 · 人数：3', divisions.text)
+        self.assertNotIn('青铜2', divisions.text)
+        self.assertEqual(len(calls), 4)
+
+        league['ranks'] = [ranks[-1]]
+        source.cache.clear()
+        future = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('暂无已开放的段位', future.text)
+        self.assertTrue(calls[-1].split('?')[0].endswith('/servers/intl/arena'))
+
+        league['ranks'] = []
+        source.cache.clear()
+        missing = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertEqual(missing.status, 'data_unavailable')
+        self.assertIn('暂无段位门槛资料', missing.text)
+        self.assertTrue(calls[-1].split('?')[0].endswith('/servers/intl/arena'))
+
     def test_public_projection_preserves_positions_states_and_snapshot_times(self):
         import json
         from types import SimpleNamespace
@@ -640,6 +753,10 @@ class PublicQueryContractTests(unittest.TestCase):
     def test_local_grammar_requires_whole_question(self):
         from ournotes_bot.natural_query.on_query import public_information_command
         self.assertEqual(public_information_command('MyGO竞技场人数'), '/查竞技场 MyGO 人数')
+        self.assertEqual(public_information_command('MyGO激奏榜线 T100多少'), '/查激奏榜线 MyGO T100')
+        self.assertEqual(public_information_command('MyGO激奏榜线多少分'), '/查激奏榜线 MyGO')
+        self.assertEqual(public_information_command('韩服 MyGO 的激奏榜线人数明细'), '/查激奏榜线 韩服 MyGO 人数明细')
+        self.assertEqual(public_information_command('MyGO激奏榜线 T100再猜一下'), '/查激奏榜线 用法')
         self.assertEqual(public_information_command('本期活动奖励'), '/查活动 奖励')
 
     def test_activity_sections_keep_conditions_unknown_and_explicit_links(self):

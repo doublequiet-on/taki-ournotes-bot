@@ -336,6 +336,17 @@ class QueryAgent:
             return self._finish_terminal(state, OutcomeCode.UNSUPPORTED, UNSUPPORTED,
                                          cache=False)
 
+        # The Arena cutoff grammar must run before the generic event-cutoff marker.
+        from .on_query import public_information_command
+        public_command = public_information_command(question)
+        if public_command is not None:
+            selected = resolve_command(public_command, repository)
+            text = handle_command(public_command, repository, resolved=selected) or UNSUPPORTED
+            state.final_code = self._command_code(selected)
+            state.local_parsed = selected is not None and state.final_code != OutcomeCode.INVALID_ARGUMENTS
+            self._remember_state(question, state)
+            return AgentOutcome(text, selected, state)
+
         # Cutoffs are live source snapshots: bypass stale plan/terminal caches and AI quotas.
         from ..query.event_cutoff_query import parse_natural_cutoff
         cutoff = parse_natural_cutoff(question)
@@ -369,17 +380,6 @@ class QueryAgent:
             outcome = self._execute_spec(state, field, repository)
             self._remember_state(question, state)
             return outcome
-
-        from .on_query import public_information_command
-        public_command = (question if re.match(r'^[/／]?查竞技场(?:\s|$)', question)
-                          else public_information_command(question))
-        if public_command is not None:
-            selected = resolve_command(public_command, repository)
-            text = handle_command(public_command, repository, resolved=selected) or UNSUPPORTED
-            state.final_code = self._command_code(selected)
-            state.local_parsed = selected is not None and state.final_code != OutcomeCode.INVALID_ARGUMENTS
-            self._remember_state(question, state)
-            return AgentOutcome(text, selected, state)
 
         cached = self._cache_get(question)
         if cached is not None and not (native and state.natural_mode == 'model'
