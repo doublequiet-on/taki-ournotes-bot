@@ -171,4 +171,6 @@ class SemanticEncoder(Protocol):
     identity: str
     dimensions: int
 
-    def encode(self, texts: Sequence[str], *, query: bool = False) -> tuple[tuple[float, ...], ...]: ...
+    def encode(self, texts: Sequence[str], *, query: bool = False) -> tuple[tuple[float, ...], ...]:
+        """Initialize the encoder even for an empty batch, without running inference."""
+        ...

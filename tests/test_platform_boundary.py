@@ -396,6 +396,43 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         self.assertEqual((invalid.code, invalid.mode), ('unavailable', None))
         self.assertEqual(self.service.error, 'approval_revision_rollback')
 
+    def test_restart_with_complete_cache_still_detects_unconfigured_encoder(self):
+        from unittest.mock import patch
+        from ournotes_bot.application.knowledge_service import KnowledgeService
+        from ournotes_bot.sources.knowledge_embeddings import LocalBgeEncoder
+
+        class FixtureWithBgeCacheIdentity(LocalBgeEncoder):
+            def encode(self, texts, *, query=False):
+                return tuple((1.,) + (0.,) * (self.dimensions - 1) for _ in texts)
+
+        self.write_fixture(text='工程测试可兑换。')
+        self.service.encoder = FixtureWithBgeCacheIdentity(None)
+        initial = self.service.refresh()
+        self.assertEqual(initial['index_mode'], 'hybrid')
+        cached = self.service.db.execute('SELECT key, value FROM vectors').fetchall()
+        self.assertTrue(cached)
+        self.service.close()
+        self.service = KnowledgeService(self.root/'content', self.root/'state.sqlite3', LocalBgeEncoder(None))
+        with patch.object(self.service.encoder, 'encode', wraps=self.service.encoder.encode) as encode:
+            status = self.service.refresh()
+            self.assertEqual((status['code'], status['index_mode'], status['index_error']),
+                             ('ready', 'lexical', 'semantic_model_not_configured'))
+            result = self.retrieve()
+            self.assertEqual((result.code, result.mode), ('ok', 'lexical'))
+            encode.assert_called_once_with(())
+        self.assertEqual(self.service.db.execute('SELECT key, value FROM vectors').fetchall(), cached)
+
+        self.service.encoder = FixtureWithBgeCacheIdentity(None)
+        with patch.object(self.service.encoder, 'encode', wraps=self.service.encoder.encode) as encode:
+            recovered = self.service.refresh()
+            self.assertEqual((recovered['code'], recovered['index_mode'], recovered['index_error']),
+                             ('ready', 'hybrid', None))
+            self.assertEqual(recovered['last_build']['encoded_chunks'], 0)
+            self.assertEqual(recovered['approved_set_revision'], initial['approved_set_revision'])
+            encode.assert_called_once_with(())
+        self.assertTrue(self.service.valid(result.lease))
+        self.assertEqual(self.retrieve().mode, 'hybrid')
+
     def test_lexical_build_cannot_publish_a_snapshot_changed_during_encoding(self):
         from unittest.mock import patch
         from ournotes_bot.domain.knowledge import KnowledgeError

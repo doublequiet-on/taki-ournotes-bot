@@ -127,7 +127,19 @@ def build_lexical_index(documents):
     return tuple(rows)
 
 
-def add_vectors(rows, encoder: SemanticEncoder, cached):
+def _encode_vectors(encoder: SemanticEncoder, texts):
+    try:
+        vectors = encoder.encode(texts)
+        if not isinstance(vectors, (tuple, list)) or len(vectors) != len(texts):
+            raise KnowledgeError('semantic_batch_shape')
+        return tuple(checked_vector(vector, encoder.dimensions) for vector in vectors)
+    except KnowledgeError as exc:
+        raise SemanticBuildError(str(exc)) from None
+    except Exception:
+        raise SemanticBuildError('knowledge_index_build_failed') from None
+
+
+def add_vectors(rows, encoder: SemanticEncoder, cached, *, check_cached_encoder=False):
     keys, missing, updates = [], {}, {}
     for row in rows:
         title = row.terms[-1]
@@ -140,18 +152,15 @@ def add_vectors(rows, encoder: SemanticEncoder, cached):
     missing = tuple(missing.items())
     for offset in range(0, len(missing), 16):
         batch = missing[offset:offset+16]
-        try:
-            vectors = encoder.encode(tuple(text for _, text in batch))
-            if not isinstance(vectors, (tuple, list)) or len(vectors) != len(batch):
-                raise KnowledgeError('semantic_batch_shape')
-            updates.update((key, checked_vector(v, encoder.dimensions)) for (key, _), v in zip(batch, vectors))
-        except KnowledgeError as exc:
-            raise SemanticBuildError(str(exc)) from None
-        except Exception:
-            raise SemanticBuildError('knowledge_index_build_failed') from None
+        vectors = _encode_vectors(encoder, tuple(text for _, text in batch))
+        updates.update((key, vector) for (key, _), vector in zip(batch, vectors))
     available = {**cached, **updates}
     index = tuple(replace(row, vector=checked_vector(available[key], encoder.dimensions))
                   for row, key in zip(rows, keys))
+    if check_cached_encoder and index and not missing:
+        # A complete cache can rebuild the document side while the query
+        # encoder is unavailable. Initialize it without re-encoding passages.
+        _encode_vectors(encoder, ())
     # Only vectors used by this generation survive. No persistent questions.
     return index, {key: available[key] for key in keys}, len(missing)
 
