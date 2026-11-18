@@ -422,6 +422,15 @@ class TotalRankingOfflineTests(unittest.TestCase):
         with patch.object(self.history,'read',side_effect=AssertionError('numeric history read')):
             self.assertFalse(render_cutoff(self.ask('总榜 100 仅数值')))
         self.assertEqual(self.calls,1)
+        import json
+        self.assertEqual(self.totals.sample(self.event, 0), 'valid')
+        with sqlite3.connect(self.history.path) as db:
+            for table in ('current_totals', 'samples'):
+                payload = db.execute(f'SELECT payload FROM {table}').fetchone()[0]
+                fields = json.loads(payload)
+                self.assertNotIn('snapshot_id', fields)
+                self.assertNotIn('source_read_ms', fields)
+
 
     def test_full_overview_splits_total_and_four_songs_without_duplicate_text(self):
         from ournotes_bot.sources.moenotes_events import BoardSnapshot

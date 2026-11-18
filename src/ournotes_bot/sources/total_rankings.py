@@ -467,7 +467,11 @@ class TotalRankingHistory:
             raise SourceError('invalid_total_time')
         if not self.writable():
             return self.last_error or 'disabled'
-        payload = json.dumps(asdict(raw), ensure_ascii=False, allow_nan=False)
+        fields = asdict(raw)
+        if self.source != 'haneoka':
+            # Legacy tracker/open readers pass their stored fields directly to the old constructor.
+            del fields['snapshot_id'], fields['source_read_ms']
+        payload = json.dumps(fields, ensure_ascii=False, allow_nan=False)
         encoded = payload.encode('utf-8')
         if len(encoded) > 262144:
             raise SourceError('invalid_total_snapshot')
