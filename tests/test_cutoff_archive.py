@@ -59,6 +59,36 @@ class ArchiveTests(unittest.TestCase):
                 self.assertFalse(answer.boards[0].player_ids)
                 self.assertEqual(answer.histories[0][1].total, 2)
 
+    def test_combined_archive_verifies_windows_and_recorded_challenge_ids(self):
+        from ournotes_bot.sources.total_rankings import (TotalRankingHistory, TotalRankingRepository,
+                                                         TotalRankingSnapshot, event_key)
+        for case in ('matching', 'shifted', 'changed_song', 'old_song_metadata'):
+            with self.subTest(case=case):
+                shifted = 86400000 if case == 'shifted' else 0
+                when = STAMP + shifted
+                songs = self.event.songs
+                if case == 'changed_song':
+                    songs = (replace(songs[0], music_id='999'), *songs[1:])
+                event = replace(self.event, start_ms=self.event.start_ms + shifted,
+                                end_ms=self.event.end_ms + shifted, songs=songs, total_ranking_enabled=True)
+                store = TotalRankingHistory(self.root / f'{case}.sqlite3', 'tracker', min_free_mb=0)
+                self.source.total_rankings = TotalRankingRepository(store)
+                total = TotalRankingSnapshot(event_key(event), 'tracker', (9000,), when, when, received_ms=when)
+                self.assertEqual(store.record(event, total), 'valid')
+                if case == 'old_song_metadata':
+                    with closing(sqlite3.connect(self.history.path)) as db, db:
+                        db.execute('DELETE FROM event_metadata')
+                combined = self.ask('id12 1-1')
+                if case == 'matching':
+                    self.assertEqual(combined.status, 'success')
+                    self.assertEqual((combined.boards[0].score(1), combined.total.score(1)), (100, 9000))
+                else:
+                    self.assertEqual(combined.status, 'data_unavailable')
+                    self.assertIn('/查榜线 jp id12 单曲', combined.text)
+                    self.assertIn('/查榜线 jp id12 总榜', combined.text)
+                self.assertEqual(self.ask('id12 单曲 1-1').boards[0].score(1), 100)
+                self.assertEqual(self.ask('id12 总榜 1-1').total.score(1), 9000)
+
     def test_parameters_any_order_round_trip_and_numeric_mode(self):
         for parts in itertools.permutations(('活动ID=12', 'jp', '3-3', '仅数值')):
             request = parse_cutoff(' '.join(parts))

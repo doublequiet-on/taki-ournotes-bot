@@ -434,12 +434,31 @@ def execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
                        getattr(repository.event_cutoffs, 'score_display_limit', 30_000_000))
 
 
+def _archive_join_issue(songs, total):
+    # Compare like-for-like windows before catalog enrichment can supply missing dates.
+    windows = (((songs.start_ms, songs.end_ms), (total.start_ms, total.end_ms)),
+               ((songs.api_start_ms, songs.api_end_ms), (total.api_start_ms, total.api_end_ms)))
+    verified_window = False
+    for left, right in windows:
+        if any(a != b for a, b in zip(left, right) if a is not None and b is not None):
+            return '单曲榜与综合榜保存的活动时间不同'
+        if None not in left and left == right:
+            verified_window = True
+    if not verified_window:
+        return '已有历史缺少可核对的完整活动时间'
+    # A legacy song archive may have captured only some of the full event's challenges.
+    known = {(song.challenge_id, song.music_id) for song in total.songs}
+    if any((song.challenge_id, song.music_id) not in known for song in songs.songs):
+        return '单曲榜与综合榜保存的挑战曲关联不同'
+    return ''
+
+
 def _historical_event(request, repository):
     """Resolve only recorded challenge identities; static song associations never create boards."""
     history = repository.event_cutoffs.history
     totals = getattr(repository.event_cutoffs, 'total_rankings', None)
     if history is None and (totals is None or request.board_scope == 'song'):
-        return None, '历史记录未配置。', 'data_unavailable'
+        return None, (), '历史记录未配置。', 'data_unavailable'
     total_events = ()
     if totals is not None and request.board_scope != 'song':
         try:
@@ -453,6 +472,7 @@ def _historical_event(request, repository):
         if not total_events:
             raise
         song_events = ()
+    songs_by_id = {event.event_id: event for event in song_events}
     total_ids = {event.event_id for event in total_events}
     events = (*total_events, *(event for event in song_events if event.event_id not in total_ids))
     # The existing JP catalog also supplies names for databases recorded before metadata storage.
@@ -486,11 +506,19 @@ def _historical_event(request, repository):
     if request.event_id:
         events = tuple(e for e in events if e.event_id == request.event_id)
     if not events:
-        return None, '未找到该服务器指定活动的本地历史；只查询已保存的数据，不补造未采集记录。', 'empty'
+        return None, (), '未找到该服务器指定活动的本地历史；只查询已保存的数据，不补造未采集记录。', 'empty'
     if len(events) > 1:
-        return None, f'活动名称匹配 {len(events)} 个活动，请使用活动ID指定（最多列10个）：\n' + '\n'.join(f'id{e.event_id} · {e.title}' for e in events[:10]), 'ambiguous'
+        return None, (), f'活动名称匹配 {len(events)} 个活动，请使用活动ID指定（最多列10个）：\n' + '\n'.join(f'id{e.event_id} · {e.title}' for e in events[:10]), 'ambiguous'
     event = events[0]
-    return replace(event, notes=('各曲展示最近一次有效观测及其时间；非实时榜、非确认终榜。',)), '', 'success'
+    song_event = songs_by_id.get(event.event_id)
+    if request.board_scope == 'all' and song_event is not None and event.event_id in total_ids:
+        total_event = next(row for row in total_events if row.event_id == event.event_id)
+        issue = _archive_join_issue(song_event, total_event)
+        if issue:
+            command = f"/查榜线 {'hk' if event.server == 'tw' else event.server} id{event.event_id}"
+            return None, (), f'{issue}，请分开查询：{command} 单曲 或 {command} 总榜。', 'data_unavailable'
+    saved_song_ids = {song.challenge_id for song in song_event.songs} if song_event is not None else set()
+    return replace(event, notes=('各曲展示最近一次有效观测及其时间；非实时榜、非确认终榜。',)), saved_song_ids, '', 'success'
 
 
 def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
@@ -503,6 +531,7 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     historical = bool(request.event_id or request.event_name)
     event = None
     current_error = None
+    saved_song_ids = ()
     if request.lock_event:
         try:
             current = source.event(request.server, deadline)
@@ -514,7 +543,7 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
                 historical = False
     try:
         if historical:
-            event, message, status = _historical_event(request, repository)
+            event, saved_song_ids, message, status = _historical_event(request, repository)
             if event is None:
                 if current_error and current_error.code != 'not_found':
                     message = '暂时无法确认当前活动。' + message
@@ -528,11 +557,11 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
                    'rate_limited': '来源限流，请稍后重试。'}.get(exc.code, '该服务器的活动信息暂不可用，请稍后重试。')
         return CutoffAnswer(request, message=SERVERS[request.server][0] + "：" + message,
                             status=exc.code if exc.code in {'not_found', 'pending', 'rate_limited'} else 'data_unavailable')
-    answer = _cutoff_for_event(request, source, event, deadline, historical)
+    answer = _cutoff_for_event(request, source, event, deadline, historical, saved_song_ids)
     return replace(answer, historical_result=historical)
 
 
-def _cutoff_for_event(request, source, event, deadline, historical):
+def _cutoff_for_event(request, source, event, deadline, historical, saved_song_ids):
     rules = event_ranking_format(event)
     totals = getattr(source,'total_rankings',None)
     total = None
@@ -576,7 +605,8 @@ def _cutoff_for_event(request, source, event, deadline, historical):
         return CutoffAnswer(request, event, message="本活动没有挑战歌曲榜。", status="empty")
     try:
         if historical:
-            boards = tuple(source.history.latest(event, song) for song in event.songs) if source.history is not None else ()
+            boards = tuple(source.history.latest(event, song) for song in event.songs
+                           if song.challenge_id in saved_song_ids)
         else:
             boards = source.boards(event, event.songs, deadline)
     except SourceError:
