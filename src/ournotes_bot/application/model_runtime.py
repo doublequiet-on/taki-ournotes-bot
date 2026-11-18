@@ -597,8 +597,28 @@ class ModelRuntime:
             if getattr(work,'hermes_chat',False):
                 work.hermes_provider_started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
-            return await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
-                                          max(.001,deadline-time.monotonic()))
+            async def send():
+                remaining=max(.001, deadline-time.monotonic())
+                return await asyncio.wait_for(self.client.request(profile,body,timeout=remaining,transport=transport),remaining)
+            result=await send()
+            if (getattr(work,'chat',False) and work.proactive is None and work.request.kind=='group'
+                    and result.error_code=='provider_unavailable' and transport.get('tls_failed_before_send')
+                    and not work.named_tls_retried and time.monotonic()<deadline
+                    and work.model_attempts < min(6,work.model_attempt_limit)):
+                work.named_tls_retried=True
+                # The gateway consumes each permission nonce once. The failed
+                # handshake sent no provider request, so keep the usage reservation.
+                validate_dispatch()
+                retry_until=await self.backend.permissions.acquire(work,deadline)
+                validate_dispatch()
+                require(time.monotonic()<retry_until,'permission_expired')
+                first_failure=transport['elapsed_ms']
+                transport.clear()
+                try:
+                    result=await send()
+                finally:
+                    if transport:transport['first_tls_failure_ms']=first_failure
+            return result
         try:
             if getattr(work,'hermes_chat',False) and not getattr(work,'hermes_native_fallback',False):
                 try:

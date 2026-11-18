@@ -1390,6 +1390,18 @@ class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls,[body,body])
         self.assertEqual(tunnels,[f'CONNECT {authority} HTTP/1.1'.encode()]*2)
 
+    async def test_failed_proxy_handshake_records_each_pre_send_phase(self):
+        from ournotes_bot.sources.model_provider import _TransportTrace
+        trace=_TransportTrace(True)
+        for event in ('connection.connect_tcp.started','connection.connect_tcp.complete',
+                      'proxy.start_tls.started','proxy.start_tls.failed'):
+            await trace.proxy_event(event,{})
+        data=trace.snapshot()
+        self.assertEqual(data['stage'],'tls')
+        self.assertTrue(data['tls_failed_before_send'])
+        for key in ('tcp_ms','proxy_connect_ms','tls_ms'): self.assertIn(key,data)
+        self.assertNotIn('upload_ms',data)
+
     async def test_openai_proxy_trace_refuses_retry_after_send(self):
         import httpx
         from ournotes_bot.sources.model_provider import _TransportTrace
@@ -2802,6 +2814,37 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
                 else:self.repo.song_metrics.current.assert_called_once_with(server)
                 if status=='ok':self.assertIn('合成短曲',str(output['data']))
                 self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_named_chat_reconnects_once_after_pre_send_tls_failure(self):
+        from ournotes_bot.domain.model_calls import AttemptResult
+        answer=self.client.request.return_value
+        calls=[]
+        async def provider(*args,transport,**kwargs):
+            calls.append(1)
+            if len(calls)==1:
+                transport.update(stage='tls',name='timeout',elapsed_ms=5001,proxied=True,
+                    headers_received=False,tls_failed_before_send=True,tls_ms=5000)
+                return AttemptResult('error',error_code='provider_unavailable')
+            transport.update(stage='complete',name='none',elapsed_ms=30,proxied=True,headers_received=True)
+            return answer
+        self.client.request.side_effect=provider
+        plan,permits=await self.prepare_native('/聊 hello')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual((len(calls),len(set(permits))),(2,2))
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertEqual(next(e['data']['first_tls_failure_ms'] for e in events if e['kind']=='transport'),5001)
+
+    async def test_named_chat_does_not_reconnect_after_upload(self):
+        from ournotes_bot.domain.model_calls import AttemptResult
+        async def provider(*args,transport,**kwargs):
+            transport.update(stage='wait_headers',name='timeout',elapsed_ms=1000,proxied=True,
+                             headers_received=False,upload_ms=1)
+            return AttemptResult('error',error_code='provider_unavailable')
+        self.client.request.side_effect=provider
+        plan,permits=await self.prepare_native('/聊 hello')
+        self.assertEqual(plan['parts'][0]['business_status'],'provider_unavailable')
+        self.assertEqual(len(permits),1)
+        self.client.request.assert_awaited_once()
 
     async def test_transport_observation_is_correlated_without_changing_usage_or_logging_prompt(self):
         answer=self.client.request.return_value

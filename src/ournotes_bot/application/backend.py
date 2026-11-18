@@ -85,6 +85,7 @@ class Work:
     hermes_pilot: bool = False
     hermes_native_fallback: bool = False
     hermes_provider_started: bool = False
+    named_tls_retried: bool = False
     hermes_send_deadline: float | None = None
     story_versions: tuple = ()
     persona_version: str = 'taki-v0/legacy-derived'
