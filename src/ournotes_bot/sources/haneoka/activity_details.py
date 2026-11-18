@@ -39,6 +39,14 @@ def rows(value):
     return value
 
 
+def target_names(target):
+    raw = target.get('name') if isinstance(target, dict) else None
+    display = text(raw)
+    if isinstance(raw, list):
+        return tuple(dict.fromkeys(name.strip() for name in (display, *raw) if name.strip()))
+    return (display.strip(),) if display.strip() else ()
+
+
 def project_details(event, artwork=lambda path: '', attribute_artwork=lambda value: ''):
     result = []
     groups = {}
@@ -53,29 +61,27 @@ def project_details(event, artwork=lambda path: '', attribute_artwork=lambda val
         constraint = {2: '成员卡', 3: '留影卡'}.get(effect.get('resourceTypeConstraint'), '')
         color = effect.get('cardType')
         color = color if type(color) is int and color in ACTIVITY_ATTRIBUTES else None
-        band = targets.get('band')
-        band_names = band.get('name', ()) if isinstance(band, dict) else ()
-        if isinstance(band_names, str):
-            band_names = (band_names,)
-        elif not isinstance(band_names, list):
-            band_names = ()
-        band_names = tuple(dict.fromkeys(name.strip() for name in band_names if name.strip()))
-        title = '／'.join(filter(None, (constraint, *names, ACTIVITY_ATTRIBUTES.get(color)))) or '加成对象未确认'
+        band_names = target_names(targets.get('band'))
+        character_names = target_names(targets.get('character'))
+        color_name = ACTIVITY_ATTRIBUTES.get(color) if not target_names(targets.get('attribute')) else None
+        title = '／'.join(filter(None, (constraint, *names, color_name))) or '加成对象未确认'
         key = (effect.get('resourceTypeConstraint'), color, json.dumps(targets, sort_keys=True, ensure_ascii=False))
         if key not in groups:
             target=next((target for target in targets.values() if isinstance(target,dict) and target.get('image')), {})
             reference=(target['resourceType'],target['resourceId']) if target.get('resourceType') in (2,3) and type(target.get('resourceId')) is int else None
             picture=artwork(target.get('image')) or attribute_artwork(color)
             role=('指定成员卡' if reference and reference[0]==2 else '指定留影卡' if reference and reference[0]==3 else
-                  '指定乐队' if 'band' in targets else '指定属性' if color else '其他加成')
-            groups[key] = (title, [], [], picture, 'wide' if reference and reference[0]==3 else 'portrait' if reference and reference[0]==2 else 'square',reference,[],role,band_names,color)
+                  '指定乐队' if band_names else '指定角色' if character_names else '指定属性' if color else '其他加成')
+            groups[key] = (title, [], [], picture, 'wide' if reference and reference[0]==3 else 'portrait' if reference and reference[0]==2 else 'square',
+                           reference, [], role, band_names, character_names, color)
         groups[key][1].append(kind + '：' + (' · '.join(levels) if levels else '数值未获取'))
         groups[key][2].append((kind, *levels))
         values=[r['percent'] for r in rows(effect.get('perRank')) if type(r.get('rank')) is int and r['rank'] >= 0 and number(r.get('percent'))]
         if values:groups[key][6].append((kind,min(values),max(values)))
     effects = [ActivityFact(title, tuple(lines), image_url=image, table=tuple(table),image_kind=kind,reference=ref,
-                            bonus_ranges=tuple(bounds),group=role,bonus_band_names=band_names,bonus_attribute=color)
-               for title, lines, table, image, kind, ref,bounds,role,band_names,color in groups.values()]
+                            bonus_ranges=tuple(bounds),group=role,bonus_band_names=band_names,
+                            bonus_character_names=character_names,bonus_attribute=color)
+               for title, lines, table, image, kind, ref, bounds, role, band_names, character_names, color in groups.values()]
     result.append(ActivitySection('加成', tuple(effects), isinstance(event.get('effects'), list)))
     rewards = []
     complete = isinstance(event.get('rewards'), list)

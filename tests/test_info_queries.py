@@ -105,6 +105,24 @@ class InformationQueryTests(unittest.TestCase):
                          {'/查活动 2 任务', '/查活动 3 任务'})
         self.assertIn('活动 ID 2', execute_activity('２', repo, now=NOW).text)
 
+    def test_history_matches_explicit_character_target_and_raw_type(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        details = project_details({'effects': [{
+            'targets': {'character': {'name': ['高松 燈', 'Tomori Takamatsu', '', '高松灯']}},
+            'bonusType': 2,
+        }]})
+        repo = Repository(catalog(activities=(
+            activity(1, '显式角色', end=NOW, details=details, event_type_id=2),
+            activity(2, '只有角色奖励卡', end=NOW, reward_cards=(CardRef(2, 7),), event_type_id=2),
+            activity(3, '不同类型', end=NOW, details=details, event_type_id=1),
+        ), cards=(card(7),)))
+        result = execute_activity('历史 角色=Tomori Takamatsu 类型id=２', repo, now=NOW)
+        self.assertEqual([row.command for row in result.views[0].rows], ['/查活动 1'])
+        self.assertIn('加成角色 · 高松灯', result.text)
+        self.assertIn('活动类型 ID 2', result.text)
+        self.assertEqual(details[0].facts[0].group, '指定角色')
+
     def test_calendar_limits_time_conflicts_to_the_requested_slot(self):
         current = activity(1, '当前唯一')
         next_a = activity(2, '未来甲', NOW + 200, NOW + 300)

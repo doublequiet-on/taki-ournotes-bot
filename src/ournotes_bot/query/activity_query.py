@@ -12,7 +12,7 @@ from dataclasses import replace
 
 from ..data import normalize
 from ..domain.info_catalog import ACTIVITY_ATTRIBUTES
-from .entity_lexicon import band_aliases, band_name_variants
+from .entity_lexicon import band_name_variants, character_name_variants, information_alias_targets
 from .contracts.info import CalendarTime, InfoAnswer, InfoRow, InfoSchedule, InfoView
 from .event_cutoff_query import SERVER_ALIASES
 from .info_query import (answer, available, card_rows, footer, named_matches,
@@ -22,10 +22,11 @@ from ..sources.moenotes_events import SERVERS, SourceError, display_time, zone_l
 HELP = (
     '/查活动 [jp/hk/kr/en] [当前/最近] [加成/奖励/任务/卡池]\n'
     '/查活动 [jp] ID或名称 [加成/奖励/任务/卡池]\n'
-    '/查活动 [jp] 列表/历史 [乐队=MyGO] [属性=红色]\n'
+    '/查活动 [jp] 列表/历史 [乐队=MyGO] [角色=高松灯] [属性=红色] [类型ID=1]\n'
     '/查活动 [jp/intl] 日程/日程开始/下期'
 )
 SECTIONS = {'加成', '奖励', '任务', '卡池'}
+FILTER_FIELDS = {'乐队', '角色', '属性', '颜色', '类型id'}
 DETAIL_HINT = '请先选定活动，再把一个明细子项放在末尾，例如 /查活动 2 奖励。'
 FILTER_KEY = re.compile(r'(?<!\S)([^\s=＝]+)[=＝]')
 NUMERIC_EXPRESSION = re.compile(r'[+\-−]?\s*\d+(?:\s*[-−–—~～至到]\s*[+\-−]?\d+|\.\d+)?')
@@ -72,8 +73,8 @@ def overview_rows(record, related, prefix, *, gacha_ids=()):
         if section.name!='加成':continue
         for fact in section.facts:bonus_groups.setdefault(fact.group or '其他加成',[]).append(fact)
     summaries=[]
-    order={'指定成员卡':0,'指定留影卡':1,'指定乐队':2,'指定属性':3}
-    for role in sorted(bonus_groups,key=lambda role:order.get(role,4)):
+    order={'指定成员卡':0,'指定留影卡':1,'指定乐队':2,'指定角色':3,'指定属性':4}
+    for role in sorted(bonus_groups,key=lambda role:order.get(role,5)):
         facts=bonus_groups[role]
         values={}
         for fact in facts:
@@ -146,6 +147,22 @@ def _related_rows(record, catalog, *, challenge_song_ids=(), include_songs=True)
     return tuple(rows)
 
 
+def _target_filter(value, kind, variants):
+    if not value:
+        return set()
+    return variants(value) | {name for group, target in information_alias_targets(value) if group == kind
+                              for name in variants(target)}
+
+
+def _matched_targets(facts, field, names, variants):
+    matches = []
+    for fact in facts:
+        titles = getattr(fact, field)
+        if any(variants(title) & names for title in titles):
+            matches.append(titles[0])
+    return tuple(dict.fromkeys(matches))
+
+
 def _static(query, repository, now, section=''):
     mode, term = 'search', query
     head, *tail = query.split(None, 1)
@@ -157,13 +174,13 @@ def _static(query, repository, now, section=''):
 
     filters = {}
     keys = tuple(FILTER_KEY.finditer(term))
-    if keys and (mode != 'search' or keys[0].group(1) in {'乐队', '属性', '颜色'}):
+    if keys and (mode != 'search' or keys[0].group(1).casefold() in FILTER_FIELDS):
         mode = 'list' if mode == 'search' else mode
         for key, next_key in zip(keys, (*keys[1:], None)):
-            field = key.group(1).replace('颜色', '属性')
+            field = key.group(1).casefold().replace('颜色', '属性')
             value = term[key.end():next_key.start() if next_key else len(term)].strip()
-            if field not in {'乐队', '属性'} or field in filters or not normalize(value):
-                return InfoAnswer('请各指定一次加成乐队或属性，例如 /查活动 历史 乐队=MyGO 属性=红色。', 'invalid_arguments')
+            if field not in FILTER_FIELDS or field in filters or not normalize(value):
+                return InfoAnswer('请各指定一次加成乐队、角色、属性或活动类型 ID。\n' + HELP, 'invalid_arguments')
             filters[field] = value
         term = term[:keys[0].start()].strip()
         if section:
@@ -178,11 +195,15 @@ def _static(query, repository, now, section=''):
         filters['属性'] = ACTIVITY_ATTRIBUTES[attribute]
     else:
         attribute = None
-    band = filters.get('乐队')
-    band_names = band_name_variants(band) if band else set()
-    if band:
-        band_names |= {name for alias, target in band_aliases() if normalize(alias) == normalize(band)
-                       for name in band_name_variants(target)}
+    type_id = None
+    if '类型id' in filters:
+        ident = unicodedata.normalize('NFKC', filters.pop('类型id'))
+        if re.fullmatch(r'[1-9][0-9]{0,15}', ident) is None:
+            return InfoAnswer('类型 ID 请使用完整正整数。', 'invalid_arguments')
+        type_id = int(ident)
+        filters['类型ID'] = ident
+    band_names = _target_filter(filters.get('乐队'), 'band', band_name_variants)
+    character_names = _target_filter(filters.get('角色'), 'character', character_name_variants)
     literal = unicodedata.normalize('NFKC', term)
     normalized_term = normalize(term)
     if not literal.isdecimal() and (normalized_term.isdecimal() or NUMERIC_EXPRESSION.fullmatch(literal)):
@@ -200,13 +221,17 @@ def _static(query, repository, now, section=''):
     matches = {}
     if filters:
         for record in records:
+            if type_id is not None and record.event_type_id != type_id:
+                continue
             facts = tuple(fact for group in record.details if group.name == '加成' for fact in group.facts)
-            bands = tuple(dict.fromkeys(fact.bonus_band_names[0] for fact in facts
-                          if any(band_name_variants(name) & band_names for name in fact.bonus_band_names)))
-            if (band and not bands) or (attribute is not None and not any(f.bonus_attribute == attribute for f in facts)):
+            bands = _matched_targets(facts, 'bonus_band_names', band_names, band_name_variants)
+            characters = _matched_targets(facts, 'bonus_character_names', character_names, character_name_variants)
+            if (band_names and not bands) or (character_names and not characters) or (
+                    attribute is not None and not any(f.bonus_attribute == attribute for f in facts)):
                 continue
             matches[record.id] = tuple(filter(None, (
                 '加成乐队 · ' + '、'.join(bands) if bands else '',
+                '加成角色 · ' + '、'.join(characters) if characters else '',
                 '加成属性 · ' + ACTIVITY_ATTRIBUTES[attribute] if attribute is not None else '',
             )))
         records = tuple(record for record in records if record.id in matches)
@@ -239,13 +264,15 @@ def _static(query, repository, now, section=''):
     rows = (InfoRow(r.title, (f'活动 ID {r.id}', *period(r), f'资料状态：{state(r, now)}'),
                     r.image_url, f'/查活动 {r.id}' + (f' {section}' if section else ''),
                     image_kind='wide', kind='banner', schedule=schedule(r, now, '活动'),
-                    children=((InfoRow('命中的加成', matches[r.id], kind='fact'),) if r.id in matches else ())
+                    children=((InfoRow('活动类型', (f'活动类型 ID {r.event_type_id}',), kind='fact'),)
+                              if r.event_type_id is not None else ())
+                    + ((InfoRow('命中的加成', matches[r.id], kind='fact'),) if matches.get(r.id) else ())
                     + _related_rows(r, catalog, include_songs=False)) for r in records)
     title = '日服 · 历史活动' if mode == 'history' else '日服 · 活动列表' if mode == 'list' else '日服 · 活动候选'
     subtitle = f'共 {len(records)} 个 · 日本时间 UTC+9'
     visual_notes = footer(catalog, diagnostics=False)
     if filter_text:
-        subtitle += ' · ' + filter_text
+        subtitle += '\n' + filter_text
         visual_notes = (*visual_notes, notes[-1])
     return answer((list_view(title, rows, subtitle=subtitle, notes=notes,
                             presentation='activity', visual_footer=visual_notes),))

@@ -69,6 +69,7 @@ class ActivityFact:
     reference: tuple[int, int] | None = None
     bonus_ranges: tuple[tuple[str, float, float], ...] = ()
     bonus_band_names: tuple[str, ...] = ()
+    bonus_character_names: tuple[str, ...] = ()
     bonus_attribute: int | None = None
     gacha_id: str = ''
 
