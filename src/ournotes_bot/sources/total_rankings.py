@@ -21,6 +21,7 @@ from contextlib import closing, nullcontext
 from dataclasses import asdict, replace
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 from ..domain.total_rankings import TotalRankingSnapshot
 from .cutoff_history import HistoryPoint, HistoryView
@@ -749,7 +750,12 @@ class TotalRankingRepository:
         if fetch is not None and not callable(fetch):
             raise ValueError('total-ranking adapter must be callable')
         self.history,self.fetch,self.clock=history,fetch,clock
-        self.lock=threading.RLock(); self.current={}; self.retry={}; self.last_errors={}
+        self._locks_guard = threading.Lock()
+        self._locks = WeakValueDictionary()
+        self.current = {}
+        self.retry = {}
+        self.last_errors = {}
+        self._rejected = {}
 
     @property
     def connected(self):
@@ -763,56 +769,82 @@ class TotalRankingRepository:
         reason = {'upstream': '上游错误', 'pending': '来源仍在采集', 'not_found': '来源暂无快照',
                   'rate_limited': '来源限流', 'network': '来源网络暂不可用',
                   'unknown_position': '来源排名顺序不可核验', 'invalid_total_time': '来源时间不可核验',
-                  'total_time_regression': '来源时间倒退', 'total_conflict': '来源快照冲突'}.get(code, '来源暂不可用')
+                  'total_time_regression': '来源时间倒退', 'total_conflict': '来源快照冲突',
+                  'clock_unknown': '来源时间不可核验', 'outside_period': '快照不在有效活动期内'}.get(code, '来源暂不可用')
         return f'综合榜{reason}，暂无可信快照；未改查单曲榜。'
+
+    def _event_lock(self, key):
+        with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[key] = lock
+            return lock
 
     def capture(self, event, deadline):
         if not self.connected:
             return None
-        key=event_key(event); now=int(self.clock()*1000)
-        with self.lock:
-            cached=self.current.get(key) or self.history.cached(event)
-            if cached and 0 <= now-cached.received_ms < 60000:
-                raw=cached
-            elif self.retry.get(key,0)>now:
-                raw=cached
-            else:
+        board, _, _ = self._capture(event, deadline)
+        return board
+
+    def _capture(self, event, deadline):
+        key = event_key(event)
+        with self._event_lock(key):
+            cached = self.current.get(key) or self.history.cached(event)
+            now = int(self.clock() * 1000)
+            if cached and quality(event, cached, now) in {'clock_unknown', 'outside_period'}:
+                cached = None
+            raw = cached
+            if self.retry.get(key, 0) <= now and not (cached and 0 <= now-cached.received_ms < 60000):
+                self._rejected.pop(key, None)
                 try:
-                    raw=validate(event,self.fetch(event,deadline),self.history.source)
-                    now=int(self.clock()*1000)
-                    raw=replace(raw,received_ms=now,observed_scores=None,quality='valid')
-                    if cached and raw.fetched_ms < cached.fetched_ms:
+                    incoming = validate(event, self.fetch(event, deadline), self.history.source)
+                    now = int(self.clock() * 1000)
+                    incoming = replace(incoming, received_ms=now, observed_scores=None, quality='valid')
+                    state = quality(event, incoming, now)
+                    if state in {'clock_unknown', 'outside_period'}:
+                        self._rejected[key] = replace(incoming, quality=state)
+                        raise SourceError(state)
+                    if cached and incoming.fetched_ms < cached.fetched_ms:
                         raise SourceError('total_time_regression')
-                    if cached and raw.fetched_ms == cached.fetched_ms and (
-                        (raw.scores, raw.player_ids, raw.player_names, raw.player_details)
+                    if cached and incoming.fetched_ms == cached.fetched_ms and (
+                        (incoming.scores, incoming.player_ids, incoming.player_names, incoming.player_details)
                         != (cached.scores, cached.player_ids, cached.player_names, cached.player_details)
-                        or cached.quality=='conflict'
+                        or cached.quality == 'conflict'
                     ):
+                        # Both versions at this timestamp are untrustworthy.
+                        raw = replace(incoming, quality='conflict')
+                        self.history.save_current(event, raw)
+                        self.current[key] = raw
                         raise SourceError('total_conflict')
-                    self.current[key]=raw
-                    saved=self.history.save_current(event,raw)
-                    if saved not in {'cached','disabled'}:
-                        raw=replace(raw,notes=(*raw.notes, '综合榜当前缓存保存失败；本次结果仍可查看。'))
-                    self.retry.pop(key,None)
-                    self.last_errors.pop(key,None)
+                    saved = self.history.save_current(event, incoming)
+                    raw = incoming
+                    if saved not in {'cached', 'disabled'}:
+                        raw = replace(raw, notes=(*raw.notes, '综合榜当前缓存保存失败；本次结果仍可查看。'))
+                    self.current[key] = raw
+                    self.retry.pop(key, None)
+                    self.last_errors.pop(key, None)
                 except SourceError as exc:
-                    self.retry[key]=now+max(60000,exc.retry_after*1000)
-                    self.last_errors[key]=exc.code
-                    if exc.code=='total_conflict':
-                        raw=replace(raw,quality='conflict')
-                        self.current[key]=raw
-                        self.history.save_current(event,raw)
-                    else:
-                        raw=cached
+                    now = int(self.clock() * 1000)
+                    self.retry[key] = now + max(60000, exc.retry_after * 1000)
+                    self.last_errors[key] = exc.code
+            failure = self.last_errors.get(key)
+            rejected = self._rejected.get(key)
             if raw is None:
-                return None
-            state=quality(event,raw,now)
+                return None, rejected, failure
+            state = quality(event, raw, now)
             old_official = self.history.source == 'haneoka' and state == 'stale'
-            status = ('综合榜当前观测' if state == 'valid' else '综合榜旧快照，显示最后可用观测'
-                      if old_official else '综合榜快照时间异常或过期，暂无可信当前值')
-            return replace(raw, scores=raw.scores if state == 'valid' or old_official else (),
-                           observed_scores=raw.scores, quality=state, status=status,
-                           notes=raw.notes+(('综合榜来源暂不可用，暂用同源缓存。',) if key in self.retry else ()))
+            usable = state == 'valid' or old_official
+            fallback = failure is not None and state != 'conflict'
+            if usable:
+                status = ('综合榜刷新失败，显示最后可用观测' if fallback else
+                          '综合榜旧快照，显示最后可用观测' if old_official else '综合榜当前观测')
+            else:
+                status = '综合榜快照时间异常或过期，暂无可信当前值'
+            board = replace(raw, scores=raw.scores if usable else (), observed_scores=raw.scores,
+                            quality=state, status=status,
+                            notes=raw.notes+(('综合榜来源暂不可用，暂用同源缓存。',) if fallback else ()))
+            return board, rejected, failure
 
     def archived(self, event, deadline):
         """Read an explicitly known ended official board without publishing a partial event identity."""
@@ -827,13 +859,15 @@ class TotalRankingRepository:
     def sample(self, event, deadline):
         if not self.connected:
             return 'not_connected'
-        board=self.capture(event,deadline)
+        board, rejected, failure = self._capture(event, deadline)
+        if rejected is not None and (board is None or rejected.fetched_ms != board.fetched_ms):
+            return self.history.record(event, rejected)
         if board is None:
-            code = self.last_errors.get(event_key(event), 'unavailable')
-            self.history.failure(event,'total_'+code)
+            code = failure or 'unavailable'
+            self.history.failure(event, 'total_' + code)
             return code
-        if event_key(event) in self.retry and board.quality!='conflict':
-            self.history.failure(event,'total_source_fallback')
+        if failure and board.quality != 'conflict':
+            self.history.failure(event, 'total_source_fallback')
             return 'source_fallback'
-        stored=self.history.record(event,board)
-        return board.quality if board.quality!='valid' and stored in {'duplicate','valid'} else stored
+        stored = self.history.record(event, board)
+        return board.quality if board.quality != 'valid' and stored in {'duplicate', 'valid'} else stored

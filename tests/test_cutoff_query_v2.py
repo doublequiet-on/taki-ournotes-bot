@@ -430,7 +430,7 @@ class TotalRankingOfflineTests(unittest.TestCase):
         self.totals.capture(self.event,0)
         cached=self.totals.current[board.event_key]
         self.now+=61
-        self.totals.fetch=lambda e,d:replace(cached,scores=(99,)*100)
+        self.totals.fetch=lambda e,d:replace(cached,scores=(99,)*100,server_ms=int(self.now*1000))
         self.assertEqual(self.totals.capture(self.event,0).quality,'conflict')
         self.assertEqual(self.totals.sample(self.event,0),'conflict')
         self.assertFalse(self.history.read(self.event,(1,)).points)
@@ -462,7 +462,7 @@ class TotalRankingOfflineTests(unittest.TestCase):
         original=self.history.cached(self.event)
         changed=replace(original,player_ids=('11999999999',*original.player_ids[1:]))
         self.now+=61
-        restarted=TotalRankingRepository(self.history,fetch=lambda e,d:changed,clock=lambda:self.now)
+        restarted=TotalRankingRepository(self.history,fetch=lambda e,d:replace(changed,server_ms=int(self.now*1000)),clock=lambda:self.now)
         self.assertEqual(restarted.capture(self.event,0).quality,'conflict')
         self.assertEqual(restarted.sample(self.event,0),'conflict')
         self.assertFalse(self.history.read(self.event,(1,)).points)
@@ -569,6 +569,67 @@ class TotalRankingOfflineTests(unittest.TestCase):
         restored=TotalRankingRepository(self.history,fetch=self.totals.fetch,clock=lambda:self.now)
         self.assertEqual(restored.capture(self.event,0).score(1),60_000_000)
         self.assertEqual(self.calls,2)
+
+    def test_slow_region_does_not_block_cached_region_and_waiters_share_refresh(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        from ournotes_bot.sources.total_rankings import event_key
+
+        jp = self.event
+        hk = replace(jp, server='tw')
+        self.totals.capture(jp, 0)
+        started, waiting, release = Event(), Event(), Event()
+        lock = self.totals._event_lock
+        fetches = []
+
+        def fetch(event, deadline):
+            fetches.append(event.server)
+            started.set()
+            self.assertTrue(release.wait(5))
+            return replace(self.snapshot(), event_key=event_key(event))
+
+        def wait_for_hk(key):
+            waiting.set()
+            return lock(key)
+
+        self.totals.fetch = fetch
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            first_hk = pool.submit(self.totals.capture, hk, 0)
+            try:
+                self.assertTrue(started.wait(5))
+                warm_jp = pool.submit(self.totals.capture, jp, 0)
+                self.assertEqual(warm_jp.result(timeout=3).score(1), 60_000_000)
+                with patch.object(self.totals, '_event_lock', side_effect=wait_for_hk):
+                    second_hk = pool.submit(self.totals.capture, hk, 0)
+                    self.assertTrue(waiting.wait(5))
+                    self.now += 2
+                    release.set()
+                    self.assertEqual(first_hk.result(timeout=5), second_hk.result(timeout=5))
+            finally:
+                release.set()
+        self.assertEqual(fetches, ['tw'])
+
+    def test_bad_clock_preserves_trusted_current_across_restart_and_is_quarantined(self):
+        import sqlite3
+        from ournotes_bot.sources.total_rankings import TotalRankingRepository
+
+        original = self.totals.capture(self.event, 0)
+        self.now += 61
+        self.totals.fetch = lambda event, deadline: replace(
+            self.snapshot(), scores=(99,) * 100,
+            fetched_ms=int(self.now * 1000) + 119_000, server_ms=int(self.now * 1000) + 120_000)
+        fallback = self.totals.capture(self.event, 0)
+        self.assertEqual((fallback.score(1), fallback.fetched_ms), (original.score(1), original.fetched_ms))
+        self.assertIn('最后可用观测', fallback.status)
+        self.assertEqual(self.history.cached(self.event).fetched_ms, original.fetched_ms)
+        self.assertEqual(self.totals.sample(self.event, 0), 'clock_unknown')
+        with sqlite3.connect(self.history.path) as db:
+            self.assertEqual(db.execute('SELECT quality FROM samples').fetchall(), [('clock_unknown',)])
+        restored = TotalRankingRepository(self.history, fetch=self.totals.fetch, clock=lambda: self.now)
+        self.assertEqual(restored.capture(self.event, 0).score(1), original.score(1))
+        self.now += 61
+        self.totals.fetch = lambda event, deadline: self.snapshot()
+        self.assertGreater(self.totals.capture(self.event, 0).fetched_ms, original.fetched_ms)
 
     def test_foreign_legacy_database_and_low_disk_are_not_modified(self):
         import sqlite3
