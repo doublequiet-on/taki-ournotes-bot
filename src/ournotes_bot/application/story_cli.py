@@ -9,12 +9,15 @@ from .story_service import StoryService
 
 
 def main():
-    parser=argparse.ArgumentParser(description='Taki 场景原文导入、检索、撤回与人工人格发布')
-    parser.add_argument('action',choices=('validate','import','status','search','read','withdraw','withdraw-persona','rollback','approve-persona'))
+    parser=argparse.ArgumentParser(description='Taki 场景原文导入、覆盖目录、检索、撤回与人工人格发布')
+    parser.add_argument('action',choices=('validate','import','status','coverage','search','read','withdraw','withdraw-persona','rollback','approve-persona'))
     parser.add_argument('--root',type=Path,required=True)
     parser.add_argument('--bundle',type=Path)
     parser.add_argument('--allow-fixture',action='store_true',help='仅限隔离验收目录；合成资料不能批准人格')
     parser.add_argument('--query');parser.add_argument('--handle');parser.add_argument('--source-id');parser.add_argument('--reason')
+    parser.add_argument('--work',help='coverage 的作品过滤')
+    parser.add_argument('--source-kind',help='coverage 的来源层级过滤')
+    parser.add_argument('--chapter',help='coverage 的章节过滤')
     parser.add_argument('--revision');parser.add_argument('--persona-id');parser.add_argument('--reviewer');parser.add_argument('--approval-ref')
     parser.add_argument('--confirm-human-review',action='store_true')
     args=parser.parse_args();service=StoryService(args.root)
@@ -26,6 +29,8 @@ def main():
                 result={'status':'valid','source_revision':bundle.revision,'sources':len(bundle.sources),'scenes':len(bundle.scenes),'fact_review':False}
             else:result=service.import_bundle(args.bundle,allow_fixture=args.allow_fixture)
         elif args.action=='status':result=service.status()
+        elif args.action=='coverage':
+            result=service.coverage(work=args.work,source_kind=args.source_kind,source_id=args.source_id,chapter=args.chapter)
         elif args.action=='search':result=service.search(args.query)
         elif args.action=='read':result=service.read(args.handle)
         elif args.action=='withdraw':result=service.withdraw(args.source_id,args.reason)
