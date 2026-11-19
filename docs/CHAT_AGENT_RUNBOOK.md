@@ -30,7 +30,9 @@
 
 试点按 `hermes_pilot` 的入口阶段计数，结合 `hermes_native_fallback`、`hermes_continuation_expired` 和 `hermes_proactive_busy` 检查各入口的回退率、超时率和忙时跳过率。实际出站由每个请求的用量记录确认，回退事件可包含未取得授权而终止的请求。
 
-控制事件中，`hermes_refill_deferred` 记录首次等待，`hermes_refill_dispatched` 记录复查取得许可并访问模型，`hermes_refill_still_busy` 记录复查仍忙。最终回复以发送回执为准。
+新消息替换旧候选时，共用这次发言机会原有的评估次数和到期时间。第二次评估遇到补充进程时，若还剩一次评估且有效期超过 5 秒，就用最后一次额度复查。每个机会最多为补充进程等待一次。
+
+控制事件中，`hermes_refill_deferred` 记录首次等待，`hermes_refill_dispatched` 记录复查取得许可并访问模型，`hermes_refill_still_busy` 记录复查仍忙。忙时跳过的 `reason` 可区分 `evaluation_limit`（评估用尽）、`opportunity_expiring`（时间不足）和执行进程或调度器繁忙。最终回复以发送回执为准。
 
 ## A0 回执恢复与批准代际
 

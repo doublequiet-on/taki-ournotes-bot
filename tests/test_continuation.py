@@ -1372,15 +1372,52 @@ class ProactiveControllerTests(unittest.TestCase):
     def test_compact_refill_has_only_one_recheck_per_opportunity(self):
         self.observe()
         first = self.ready()
-        self.assertTrue(self.controller.allow_refill_recheck(first))
-        self.assertFalse(self.controller.allow_refill_recheck(first))
+        self.assertIsNone(self.controller.reserve_refill_recheck(first))
+        self.assertEqual(self.controller.reserve_refill_recheck(first), 'refill_already_reserved')
         self.controller.decide(first, 'defer', defer_seconds=5, actual_cost_micro=0)
         self.now[0] += 4.9
         self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
         self.now[0] += 0.2
         second = self.controller.candidate(self.a, reserve_cost_micro=100)
         self.assertTrue(second.refill_recheck)
-        self.assertFalse(self.controller.allow_refill_recheck(second))
+        self.assertEqual(self.controller.reserve_refill_recheck(second), 'refill_already_reserved')
+
+    def test_replacement_can_use_the_last_evaluation_for_a_refill_recheck(self):
+        self.observe()
+        stale = self.ready()
+        self.observe('m2')
+        self.controller.settle(stale, actual_cost_micro=0)
+        second = self.ready()
+        self.assertEqual(second.opportunity_id, stale.opportunity_id)
+        self.assertIsNone(self.controller.reserve_refill_recheck(second))
+        self.controller.decide(second, 'defer', defer_seconds=5, actual_cost_micro=0)
+        self.now[0] += 5
+        third = self.controller.candidate(self.a, reserve_cost_micro=100)
+        self.assertTrue(third.refill_recheck)
+        self.assertEqual(self.controller.reserve_refill_recheck(third), 'refill_already_reserved')
+
+    def test_first_refill_at_evaluation_limit_or_near_expiry_does_not_recheck(self):
+        for i in range(3):
+            self.observe('m'+str(i))
+            candidate = self.ready()
+            if i < 2:
+                self.controller.decide(candidate, 'skip', actual_cost_micro=0)
+        self.assertEqual(self.controller.reserve_refill_recheck(candidate), 'evaluation_limit')
+        self.now[0] = candidate.expires_at
+        self.observe('fresh')
+        candidate = self.ready()
+        self.now[0] = candidate.expires_at - 5
+        self.assertEqual(self.controller.reserve_refill_recheck(candidate), 'opportunity_expiring')
+
+    def test_new_message_during_refill_delay_is_not_a_scheduled_retry(self):
+        self.observe()
+        first = self.ready()
+        self.assertIsNone(self.controller.reserve_refill_recheck(first))
+        self.controller.decide(first, 'defer', defer_seconds=5, actual_cost_micro=0)
+        self.observe('replacement')
+        replacement = self.ready()
+        self.assertFalse(replacement.refill_recheck)
+        self.assertEqual(self.controller.reserve_refill_recheck(replacement), 'refill_already_reserved')
 
     def test_defer_is_version_bound_and_has_at_most_two_rechecks(self):
         self.observe()

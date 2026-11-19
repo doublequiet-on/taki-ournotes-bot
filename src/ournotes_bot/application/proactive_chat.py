@@ -181,7 +181,7 @@ class _Opportunity:
     knowledge_leases: dict = field(default_factory=dict)
     send_interrupted: bool = False
     lightweight: bool = False
-    refill_deferred: bool = False
+    refill_recheck_evaluation: int | None = None
 
 
 @dataclass
@@ -534,19 +534,25 @@ class ProactiveController:
                                   ticket.service_subject_id, messages,
                                   now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,
                                   opportunity_id=opportunity.id, context_gap_ms=context_gap_ms,
-                                  refill_recheck=opportunity.refill_deferred and opportunity.evaluations == 2,
+                                  refill_recheck=deferred and opportunity.evaluations == opportunity.refill_recheck_evaluation,
                                   image_boundary_id=image_boundary_id,
                                   addressed_message_ids=tuple(row.message.message_id for row in rows if row.addressed))
 
-    def allow_refill_recheck(self, candidate):
-        group, ticket = self._ticket(candidate)
-        opportunity = group.opportunity if group else None
-        if (not self.max_defer_rechecks or ticket is None or opportunity is None
-                or ticket.opportunity_id != opportunity.id or opportunity.evaluations != 1
-                or opportunity.refill_deferred or self.clock() + 5 >= candidate.expires_at):
-            return False
-        opportunity.refill_deferred = True
-        return True
+    def reserve_refill_recheck(self, candidate):
+        """Reserve one remaining evaluation, returning the reason if it cannot run."""
+        if not self.valid(candidate):
+            return 'proactive_stale'
+        opportunity = self.groups[candidate.scope].opportunity
+        if opportunity is None or opportunity.id != candidate.opportunity_id:
+            return 'proactive_stale'
+        if opportunity.refill_recheck_evaluation is not None:
+            return 'refill_already_reserved'
+        if opportunity.evaluations >= self.max_defer_rechecks + 1:
+            return 'evaluation_limit'
+        if self.clock() + 5 >= candidate.expires_at:
+            return 'opportunity_expiring'
+        opportunity.refill_recheck_evaluation = opportunity.evaluations + 1
+        return None
 
     def opportunity_budget(self,candidate):
         group,ticket=self._ticket(candidate)

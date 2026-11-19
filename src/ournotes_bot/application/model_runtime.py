@@ -452,14 +452,15 @@ class ModelRuntime:
             if (work.hermes_pilot and work.proactive is not None and not work.continuation
                     and code in ('model_queue_busy','chat_hermes_busy','chat_hermes_refilling')
                     and self.agent.proactive.valid(work)):
-                if (code == 'chat_hermes_refilling' and not work.hermes_provider_started
-                        and not work.proactive.evidence_route
-                        and self.agent.proactive.controller.allow_refill_recheck(work.proactive)):
-                    self.agent.proactive.trace(work,'control',status='hermes_refill_deferred')
-                    self.agent.proactive.decision(work,'{"participation":"defer","delay_seconds":5}')
-                    return replies.PreparedReply('',business_status='proactive_defer')
+                reason = code
+                if code == 'chat_hermes_refilling' and not work.hermes_provider_started and not work.proactive.evidence_route:
+                    reason = self.agent.proactive.controller.reserve_refill_recheck(work.proactive)
+                    if reason is None:
+                        self.agent.proactive.trace(work,'control',status='hermes_refill_deferred')
+                        self.agent.proactive.decision(work,'{"participation":"defer","delay_seconds":5}')
+                        return replies.PreparedReply('',business_status='proactive_defer')
                 status = 'hermes_refill_still_busy' if work.proactive.refill_recheck else 'hermes_proactive_busy'
-                self.agent.proactive.trace(work,'control',status=status,
+                self.agent.proactive.trace(work,'control',status=status,reason=reason,
                     source='scheduler' if code=='model_queue_busy' else 'worker')
                 self.agent.proactive.decision(work,'{"participation":"skip"}')
                 return replies.PreparedReply('',business_status='proactive_skip')

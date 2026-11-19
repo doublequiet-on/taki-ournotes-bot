@@ -49,6 +49,9 @@ class LocalBgeEncoder:
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
         options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        # Variable-length batches should release their temporary CPU buffers
+        # after inference in the long-lived bot process.
+        options.enable_cpu_mem_arena = False
         tokenizer = Tokenizer.from_file(str(self.directory / 'tokenizer.json'))
         tokenizer.enable_truncation(max_length=512)
         tokenizer.enable_padding(pad_id=0, pad_token='[PAD]')
