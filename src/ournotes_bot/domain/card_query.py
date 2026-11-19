@@ -20,6 +20,7 @@ class CardFilters:
     title_ids: tuple[int, ...] = ()
     leader: tuple[str, ...] = ()
     character_ids: tuple[int, ...] = ()
+    acquisition: tuple[str, ...] = ()
 
     def __post_init__(self):
         for key, values in self.conditions(include_empty=True):
@@ -29,7 +30,7 @@ class CardFilters:
 
     def conditions(self, *, include_empty=False):
         """Enumerate only the declared dimensions; no arbitrary mapping keys."""
-        for key in ("rarity", "type", "character", "band", "live", "gekisou", "tags", "title_ids", "leader", "character_ids"):
+        for key in ("rarity", "type", "character", "band", "live", "gekisou", "tags", "title_ids", "leader", "character_ids", "acquisition"):
             values = getattr(self, key)
             if values or include_empty:
                 yield key, values

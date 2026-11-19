@@ -285,6 +285,15 @@ class CatalogTests(unittest.TestCase):
     def records(self):
         return source.validate(self.saved, self.now)[0]
 
+    def test_acquisition_uses_jp_type_for_both_card_catalogs(self):
+        documents = self.saved["documents"]
+        for resource, kind in (("cards", "event"), ("support-cards", "gift")):
+            documents["jp"][resource]["1"]["type"] = kind
+            documents["intl"][resource]["1"]["type"] = "permanent"
+        _, members, snaps = self.records()
+        for collection, expected in ((members, "event"), (snaps, "gift")):
+            self.assertEqual(next(c for c in collection if c.id == 1).catalog["acquisition"], expected)
+
     def test_guest_index_matches_complete_same_release_pagination(self):
         for server in ("jp", "intl"):
             docs = self.saved["documents"][server]

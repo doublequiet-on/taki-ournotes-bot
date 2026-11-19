@@ -57,6 +57,41 @@ class CardCatalogTests(unittest.TestCase):
         self.assertFalse(answer.error, answer.error)
         return [c.id for c in answer.cards]
 
+    def test_acquisition_standalone_explicit_and_legacy_dimensions(self):
+        kinds = ("limited", "birthday", "dreamfes", "campaign", "unknown", "gift", "pass", "permanent", "event")
+
+        def cards(base):
+            return [replace(base, id=i, rarity=20 if i == 8 else base.rarity,
+                            catalog={**base.catalog, "acquisition": kind}) for i, kind in enumerate(kinds, 1)]
+
+        self.repo.cards = cards(self.base)
+        self.repo.support_cards = cards(self.support)
+        for head in ("/查卡", "/查留影卡"):
+            for text, expected in (
+                ("期間限定", {1, 2, 3}), ("期限", {1}), ("LIMITED", {1}), ("分類=bD", {2}),
+                ("獲取方式=通行證,贈送", {6, 7}), ("分类=DF,联名合作", {3, 4}),
+                ("活動報酬", {9}), ("分類未確認", {5}), ("perm 类型=红色", {8}),
+                ("获取分类=不限", set(range(1, 10))),
+            ):
+                with self.subTest(head=head, text=text):
+                    answer = resolve_command(f"{head} {text}", self.repo).catalog
+                    self.assertFalse(answer.error, answer.error)
+                    self.assertEqual({c.id for c in answer.cards}, expected)
+        self.assertEqual(self.ids("BD"), [8])
+        self.assertEqual(self.ids("分类=BD"), [2])
+        self.assertEqual(self.ids("获取方式=通行证,赠送", True), [6, 7])
+        self.assertIn("获取分类", resolve_command("/查卡 分类=不存在", self.repo).catalog.error)
+
+    def test_acquisition_incomplete_data_is_not_an_explicit_unknown(self):
+        self.repo.cards = [replace(self.base, catalog={"acquisition": "unknown"})]
+        for missing in ({}, {"acquisition": "initial"}, {"acquisition": "future-type"}):
+            self.repo.cards[1:] = [replace(self.base, id=2, card_type=2, catalog=missing)]
+            for text in ("unknown", "普通限定", "Fes"):
+                self.assertEqual(query_cards(text, self.repo).status, "data_unavailable")
+            self.assertEqual(self.ids("unknown 红"), [1])
+            self.assertEqual(self.ids("红 普通限定"), [])
+            self.assertEqual(len(query_cards("", self.repo).cards), 2)
+
     def test_profile_card_links_follow_source_character_ids_through_direct_commands(self):
         from test_info_queries import person
 
