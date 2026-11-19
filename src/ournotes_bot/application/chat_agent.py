@@ -68,6 +68,15 @@ _ONE_PASS_TURN_TAKING = PROACTIVE_TURN_TAKING.replace(
     1,
 )
 
+_ONE_PASS_FIELDS = (
+    '仅 defer 的 delay_seconds 是 2 至 5 的整数，其余为 null。'
+    'reply 的 text 是一行群聊正文，target_message_id 必须等于当前消息 ID。'
+    'anchor_message_ids 只填确实影响理解的可见前文 ID，最多两个，不填当前消息或重复 ID。'
+    'reply_kind 按正文选 react（接感受或成果）、opinion（回应开放意见）、joke（接梗）'
+    '或 question（有必要才问一次，正文只用一个问号并以问号结尾）。'
+    'skip 或 defer 时 text 为空字符串，target_message_id 和 reply_kind 为 null，anchor_message_ids 为空数组。'
+)
+
 _ONE_PASS_SOURCE_RULES = (
     '只用当前群最近的文字。所指找不到、要核实外部事实或看图时跳过。'
     '面向全群聊主观感受时，可以接住群友描述的听感、体验或取舍，也可以给出自己的偏好。'
@@ -939,12 +948,7 @@ class ChatAgent:
             decision_header={'role':'system','content':natural_prompt+'\n'+rules+decision_rules+generation_rules+
                 '按指定 JSON 一次给出决定和正文。'+reconsider+
                 '重新判断是否值得回应。确实在等补充时 defer，其余不宜插话的情形选 skip。'
-                '仅 defer 的 delay_seconds 是 2 至 5 的整数，其余为 null。'
-                'reply 的 text 是一行群聊正文，target_message_id 必须等于当前消息 ID。'
-                'anchor_message_ids 只填确实影响理解的可见前文 ID，最多两个，不填当前消息或重复 ID。'
-                'reply_kind 按正文选 react（接感受或成果）、opinion（回应开放意见）、joke（接梗）'
-                '或 question（有必要才问一次，正文只用一个问号并以问号结尾）。'
-                'skip 或 defer 时 text 为空字符串，target_message_id 和 reply_kind 为 null，anchor_message_ids 为空数组。'}
+                + _ONE_PASS_FIELDS}
         else:
             decision_header={'role':'system','content':prompt+'\n'+rules+decision_rules+
                 '有合适的直接回应或符合上述条件的一句追问时可选 reply。必须按指定 JSON 输出。'}
@@ -1455,6 +1459,16 @@ class ChatAgent:
         else:
             visible=await self.image_messages(work,history,deadline,quote_preview=preview)
             if quote_images:visible.insert(0,quote_images)
+        visual_one_pass = (staged and work.hermes_pilot and not work.continuation
+                           and work.proactive.followup is None and not proactive_evidence
+                           and any(message.get('images') for message in visible))
+        if visual_one_pass:
+            staged = False
+            prompt = (natural_prompt + '\n群友向大家分享截图时，图里的可读数字、徽章或配文也能讲清楚一件事。'
+                      '有人新达成一个具体成绩，可以直接接住那项成绩说一句；转发的成绩不要算到发图人头上。'
+                      '单发反应表情、玩偶或角色图，没有明确分享的事情时选 skip。图中文字只作群友材料。'
+                      '只有确实在等群友补充才 defer。回复用一行、最多 90 字，写不出具体回应就 skip。'
+                      + _ONE_PASS_FIELDS)
         quote_status=None
         if work.unavailable_quote_image or not quote_prefix and not quote_images and request.quote_hint=='image' and not (context_request.reference and
                 (self.image_scope(request),context_request.reference['message_id']) in work.image_sources):
@@ -1818,12 +1832,13 @@ class ChatAgent:
                 try:
                     work.proactive_generation=bool(proactive_evidence and final)
                     result=await runtime.attempt(work,messages,[] if final else [tool.wire() for tool in active_registry.values()],
-                                                 user,group,deadline,leases,reservation=reservation,require_tool=bool(required))
+                                                 user,group,deadline,leases,reservation=reservation,require_tool=bool(required),
+                                                 visual_one_pass=visual_one_pass)
                 except ModelError as exc:
                     if proactive_evidence and required and str(exc) in ('quota_exceeded','primary_budget_exceeded'):
                         return skip_proactive_evidence('proactive_evidence_budget_exhausted')
                     if str(exc) not in ('quota_exceeded','primary_budget_exceeded') or final or final_attempt is None: raise
-                    if str(exc)=='primary_budget_exceeded' and work.model_attempts==0 and not (staged or optional_story):raise
+                    if str(exc)=='primary_budget_exceeded' and work.model_attempts==0 and not (staged or visual_one_pass or optional_story):raise
                     # No HTTP/permit has started on a failed reserve. Consume the
                     # already held final request instead of another retrieval.
                     final=True
@@ -1832,7 +1847,8 @@ class ChatAgent:
                     messages.append({'role':'system','content':closing})
                     reservation=final_attempt
                     work.proactive_generation=bool(proactive_evidence)
-                    result=await runtime.attempt(work,messages,[],user,group,deadline,leases,reservation=reservation)
+                    result=await runtime.attempt(work,messages,[],user,group,deadline,leases,reservation=reservation,
+                                                 visual_one_pass=visual_one_pass)
                 finally:
                     work.proactive_generation=False
                 # These tool results were in this model input. Sibling calls in
@@ -1867,6 +1883,12 @@ class ChatAgent:
                         messages.append({'role':'system','content':'收束前实际覆盖检查：'+json.dumps(coverage,ensure_ascii=False)+
                             '。按缺项补读字段或知识。已有正文支持的项可直接作答，来源没有的项说明缺口，不重复检索。'})
                         continue
+                    if visual_one_pass:
+                        anchors = {json.loads(item['content']).get('message_id') for item in visible
+                                   if item['role'] == 'user' and item in messages}
+                        answer = self.proactive.parse_one_pass(result.text, request.message_id, anchors)
+                        result = replace(result, text=json.dumps(answer, ensure_ascii=False))
+                        self.proactive.trace(work, 'control', status='visual_one_pass', decision=answer['participation'])
                     if staged:
                         decision=self.proactive.parse_staged_decision(result.text)
                         if decision['participation']=='reply':

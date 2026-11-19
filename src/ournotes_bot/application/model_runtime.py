@@ -542,7 +542,7 @@ class ModelRuntime:
             require(bound<=profile.max_input_tokens,'model_input_too_large')
         return profile,body,bound
 
-    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None,billing_request_id=None,service_policy=None):
+    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None,billing_request_id=None,service_policy=None,visual_one_pass=False):
         profile=work.model_snapshot.profile
         light=work.proactive is not None and getattr(work.proactive,'lightweight',False)
         self.check(work,deadline,leases)
@@ -555,7 +555,7 @@ class ModelRuntime:
             body=request_body(profile,messages,tools)
         if (not light and work.proactive is not None and web is None and service_policy is None
                 and billing_request_id is None and not getattr(work,'proactive_generation',False) and profile.wire_profile=='openai-responses-v1'):
-            body['text']={'format':self.agent.proactive.response_format(lookup=
+            body['text']={'format':self.agent.proactive.response_format(one_pass=visual_one_pass, lookup=
                 self.agent.proactive.uses_public_lookup(work.request.conversation_id, getattr(work.proactive,'evidence_route','')))}
         action_budget=()
         if web is not None:

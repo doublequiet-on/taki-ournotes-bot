@@ -6218,6 +6218,32 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         persisted=' '.join(row[0] for row in self.agent.store.db.execute('SELECT context FROM runs'))
         self.assertNotIn('PRIVATE_PICTURE',persisted);self.assertNotIn('base64,',persisted)
 
+    async def test_hermes_visual_reply_needs_only_one_provider_permit(self):
+        runtime = self.backend.model_runtime
+        runtime.hermes.pilot_group = 'g1'
+        attachments = self.proactive_picture()
+        self.observation('', attachments=attachments)
+        self.now += .01
+        value = self.observation('又有人达到了这个等级', seq=2)
+        self.tick += 1.6
+        answer = dict(participation='reply', text='又多了一枚徽章！', delay_seconds=None,
+                      target_message_id='observed2', anchor_message_ids=['observed1'], reply_kind='react')
+        async def dispatch_worker(work, profile, body, deadline, validate, dispatch):
+            validate()
+            self.assertEqual(body['text']['format']['name'], 'proactive_one_pass')
+            self.assertEqual(sum(p.get('type') == 'input_image' for row in body['input']
+                                 if isinstance(row.get('content'), list) for p in row['content']), 1)
+            return await dispatch()
+
+        self.client.request.return_value = self.result(json.dumps(answer, ensure_ascii=False))
+        with patch.object(runtime.admin, 'hermes_route', return_value=True), patch.object(
+                runtime.hermes, 'request', side_effect=dispatch_worker):
+            plan, attempts, _ = await self.candidate(value)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(self.client.request.call_count, 1)
+        self.assertTrue(plan['send_allowed'], plan)
+        self.assertEqual(plan['parts'][0]['text'], answer['text'])
+
     async def test_proactive_picture_survives_context_trimming(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
         self.current_user='u2';self.observation('',attachments=self.proactive_picture())
