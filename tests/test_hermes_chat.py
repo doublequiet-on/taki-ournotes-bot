@@ -169,7 +169,10 @@ class HermesRouteTests(fixtures.Fixture, unittest.IsolatedAsyncioTestCase):
 
     async def test_replaced_cold_worker_stops_before_provider_dispatch(self):
         from unittest.mock import patch
+        from ournotes_bot.application.backend_protocol import ProtocolError
         fixtures.ChatServiceIntegrationTests.enable_lightweight_fact_fixture(self)
+        self.runtime.hermes.pilot_group = 'g1'
+        self.agent.store.clock = lambda: self.now
         entered = asyncio.Event()
         async def wait_for_worker(work, profile, body, deadline, validate, dispatch):
             entered.set()
@@ -193,13 +196,33 @@ class HermesRouteTests(fixtures.Fixture, unittest.IsolatedAsyncioTestCase):
             try:
                 await asyncio.wait_for(entered.wait(), 3)
                 self.now += .1
-                observe('replacement', 2, '换个话题，大家排练完会一起吃饭吗？')
+                replacement = observe('replacement', 2, '换个话题，大家排练完会一起吃饭吗？')
                 self.assertTrue(work.ended.is_set())
                 self.assertEqual(work.terminal_reason, 'observation_replaced')
                 self.assertEqual(work.model_attempts, 0)
                 self.client.request.assert_not_awaited()
             finally:
                 work.ended.set()
+            self.assertEqual(self.backend.lookup(raw['request_id'], 'e1')['status'], 'aborted')
+            self.tick += 1.6
+            with patch.object(self.runtime.hermes, 'request', side_effect=ProtocolError('chat_hermes_refilling', 503)):
+                plan, permits, _ = await self.candidate(replacement, 2)
+                events = self.backend.diagnostics.read(plan['request_id'])['chat_events']
+                self.assertTrue(any(e['data'].get('status')=='hermes_refill_deferred' for e in events))
+                self.assertFalse(permits)
+            self.client.request.assert_not_awaited()
+            self.tick += 5.1
+            self.now += 5.1
+            async def ready(work, profile, body, deadline, validate, dispatch):
+                validate()
+                return await dispatch()
+            self.client.request.return_value = self.result('{"participation":"skip"}')
+            with patch.object(self.runtime.hermes, 'request', side_effect=ready):
+                plan, permits, _ = await self.candidate(replacement, 3)
+                events = self.backend.diagnostics.read(plan['request_id'])['chat_events']
+                self.assertTrue(any(e['data'].get('status')=='hermes_refill_dispatched' for e in events))
+                self.assertEqual(len(permits), 1)
+            self.client.request.assert_awaited_once()
 
     def check_scratch_empty(self):
         self.assertLessEqual({path.name for path in self.scratch.iterdir()}, {'.owner.sqlite3', '.owner.sqlite3-journal'})
