@@ -1,5 +1,6 @@
 """Share equal prepared PNGs without changing any URL path. Run as the cache owner."""
 import argparse
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -19,7 +20,7 @@ def identity(st):
 
 
 def read_image(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, 'O_NOATIME', 0))
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | getattr(os, 'O_NOATIME', 0))
     with os.fdopen(fd, 'rb') as stream:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or not 0 < st.st_size <= 6_000_000:
@@ -34,8 +35,8 @@ def compact(cache, apply):
         raise ValueError('Expected the canonical prepared artwork directory')
     representatives = {}
     count = bytes_saved = changed = 0
-    with tempfile.TemporaryDirectory(dir=cache) as tmp:
-        staged = Path(tmp)/'linked'
+    with (tempfile.TemporaryDirectory(dir=cache) if apply else nullcontext()) as tmp:
+        staged = Path(tmp)/'linked' if apply else None
         for path in sorted(cache.iterdir()):
             if not re.fullmatch(r'[a-f0-9]{64}\.png', path.name) or path.is_symlink():
                 continue
@@ -75,7 +76,8 @@ def compact(cache, apply):
             except FileNotFoundError:
                 changed += 1
             finally:
-                staged.unlink(missing_ok=True)
+                if staged is not None:
+                    staged.unlink(missing_ok=True)
     return {'applied':apply,'linked_paths':count,'allocated_bytes':bytes_saved,'changed_paths':changed}
 
 

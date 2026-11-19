@@ -193,7 +193,8 @@ def collect(controller, base, state_dir, output_dir, *, archive_estimate=None, b
     sizes_file=output_dir/'sizes-v1.json'
     try:sizes=trusted_json(sizes_file)
     except (OSError,ValueError):sizes={}
-    if not sizes or now-sizes.get('observed_at',0)>=600:
+    if (not sizes or now-sizes.get('observed_at',0)>=600
+            or archive_estimate is not None and 'archive_lower_bound_bytes' not in sizes):
         deadline=time.monotonic()+2
         paths={'versions':base/'releases','bundles':state_dir/'bundle-cache','business_data':base/'data',
                'assets':base/'data/haneoka-asset-cache','backups':state_dir/'backups'}

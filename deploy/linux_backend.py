@@ -67,7 +67,9 @@ def minimum_data_archive_bytes(data: Path, *, deadline=None) -> int:
             dirs[:] = [n for n in dirs if n != '.env'
                        and not (Path(parent) == data and n == 'haneoka-asset-cache')]
             size += len(dirs) * 512
-            for name in files:
+            for index,name in enumerate(files):
+                if deadline is not None and index % 128 == 0 and time.monotonic() >= deadline:
+                    raise TimeoutError('backup estimate deadline')
                 if name == '.env' or (Path(parent) == data and name == 'haneoka-asset-cache'):
                     continue
                 info = (Path(parent) / name).lstat()

@@ -148,6 +148,25 @@ class HermesRouteTests(fixtures.Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.group_settings())['guard'], current['guard'])
         self.assertEqual((await self.select(False, current=current, basic_only=True))[0], 200)
 
+    async def test_refilling_pilot_defers_once_before_any_provider_request(self):
+        from unittest.mock import patch
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        fixtures.ChatServiceIntegrationTests.enable_lightweight_fact_fixture(self)
+        self.runtime.hermes.pilot_group = 'g1'
+        self.agent.store.clock = lambda: self.now
+        with patch.object(self.runtime.admin, 'hermes_route', return_value=True), patch.object(
+                self.runtime.hermes, 'request', side_effect=ProtocolError('chat_hermes_refilling',503)):
+            observed = self.observation('大家排练时先练哪一段？', seq=1)
+            self.tick += 1.6
+            for serial, status in enumerate(('hermes_refill_deferred','hermes_refill_still_busy'), 1):
+                plan, permits, _ = await self.candidate(observed, serial)
+                events = self.backend.diagnostics.read(plan['request_id'])['chat_events']
+                self.assertTrue(any(e['data'].get('status') == status for e in events), events)
+                self.assertFalse(permits)
+                self.now += 5.1
+                self.tick += 5.1
+            self.client.request.assert_not_awaited()
+
     async def test_replaced_cold_worker_stops_before_provider_dispatch(self):
         from unittest.mock import patch
         fixtures.ChatServiceIntegrationTests.enable_lightweight_fact_fixture(self)
