@@ -49,6 +49,8 @@ _SEPARATORS = ",，、|/或"
 _NAME_END = re.compile(rf"(?=$|[\s{re.escape(_SEPARATORS)}])")
 _MEMBER_FIELD = re.compile(rf"([^\s=:{re.escape(_SEPARATORS)}]+)\s*[=:]\s*")
 _WORD = re.compile(rf"[^\s{re.escape(_SEPARATORS)}]+")
+_PLAIN_TITLE_WORD = rf'[^\s=:"{re.escape(_SEPARATORS)}]+'
+_MULTIWORD_TITLE = re.compile(rf"{_PLAIN_TITLE_WORD}(?:\s+{_PLAIN_TITLE_WORD})+")
 _QUOTED_TITLE = re.compile(r'"([^"]*)"')
 _UNRESTRICTED = {"全部", "不限", "すべて"}
 _COLOURS = {"红": 1, "蓝": 2, "绿": 3, "黄": 4, "紫": 5}
@@ -371,22 +373,22 @@ def _card_filter(value, key, repository, *, support=False):
 def _card_parts(query, repository, *, support):
     # Protect complete source names before treating punctuation or spaces as syntax.
     names = set(card_alias_spellings(support=support))
+    source = repository.support_cards if support else repository.cards
+    titles = {normalize(title) for card in source for title in _card_titles(card) if title}
     for card in repository.cards:
         names.update((card.character, card.band))
         names.update(card.localized.get("character", {}).values())
         names.update(card.localized.get("band", {}).values())
         if not support:
-            names.update(_card_titles(card))
             for tag_names in card.catalog.get("tags", {}).values():
                 names.update(tag_names.values())
     for card in repository.support_cards:
         names.update(card.characters)
         names.update(card.catalog.get("bands", ()))
-        if support:
-            names.update(_card_titles(card))
-    names = {normalize(name) for name in names if name}
+    names = {normalize(name) for name in names if name} | titles
     max_name = max(map(len, names), default=0)
     after_title_field = False
+    bare_value = True
     start = 0
     while start < len(query):
         if query[start].isspace():
@@ -394,20 +396,20 @@ def _card_parts(query, repository, *, support):
             continue
         field = _MEMBER_FIELD.match(query, start)
         name_end = start
-        title_fragments = ()
-        if after_title_field and not field and query[start] != '"':
-            # Within 卡名=, protect a continuous source title even when it ends in a filter alias.
-            cards = repository.support_cards if support else repository.cards
-            title_fragments = {normalize(title) for card in cards for title in _card_titles(card) if title}
-        if not (field and (field[1] == "卡名" or field[1].casefold() in _CHARACTER_ID_FIELDS)):
+        explicit_field = field and (field[1] == "卡名" or field[1].casefold() in _CHARACTER_ID_FIELDS)
+        standalone_separator = query[start] in _SEPARATORS and _NAME_END.match(query, start + 1)
+        if not explicit_field and not standalone_separator and not (after_title_field and query[start] == '"'):
             for boundary in _NAME_END.finditer(query, start + 1):
                 stop = boundary.start()
                 if query[stop - 1].isspace():
                     continue
-                spelling = normalize(query[start:stop])
+                candidate = query[start:stop]
+                spelling = normalize(candidate)
                 if len(spelling) > max_name:
                     break
-                if spelling and (spelling in names or any(spelling in title for title in title_fragments)):
+                fragment = (after_title_field and query[start] not in _SEPARATORS
+                            or bare_value and _MULTIWORD_TITLE.fullmatch(candidate))
+                if spelling and (spelling in names or (fragment and any(spelling in title for title in titles))):
                     name_end = stop
         if name_end > start:
             end, kind = name_end, "value"
@@ -424,6 +426,7 @@ def _card_parts(query, repository, *, support):
             end, kind = _WORD.match(query, start).end(), "value"
         yield start, end, kind, field[1] if kind == "field" else query[start:end]
         after_title_field = kind == "field" and field[1] == "卡名"
+        bare_value = kind not in {"field", "separator"}
         start = end
 
 

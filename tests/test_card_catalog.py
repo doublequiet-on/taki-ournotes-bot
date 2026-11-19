@@ -92,14 +92,17 @@ class CardCatalogTests(unittest.TestCase):
             self.assertEqual(self.ids("红 普通限定"), [])
             self.assertEqual(len(query_cards("", self.repo).cards), 2)
 
-    def test_explicit_title_fragments_can_contain_acquisition_aliases(self):
+    def test_title_fragments_can_contain_acquisition_aliases(self):
         for command, attr, base in (("/查卡", "cards", self.base), ("/查留影卡", "support_cards", self.support)):
             setattr(self.repo, attr, [
                 replace(base, id=50, title="Into a World Yet Unknown", catalog={"acquisition": "permanent"}),
                 replace(base, id=76, title="Radiant Passus", catalog={"acquisition": "event"}),
                 replace(base, id=80, title="Other", catalog={"acquisition": "pass"}),
             ])
-            for query, expected in (("卡名=Yet Unknown", [50]), ("卡名=Radiant Pass", [76]),
+            for query, expected in (("Yet Unknown", [50]), ("Radiant Pass", [76]),
+                                    ("常驻 Yet Unknown", [50]), ("Radiant Pass 活动", [76]),
+                                    ("Radiant Pass 分类=pass", []), ("分类=pass Radiant Pass", []),
+                                    ("卡名=Yet Unknown", [50]), ("卡名=Radiant Pass", [76]),
                                     ('卡名="Radiant Pass"', [76]), ("常驻 卡名=Yet Unknown", [50]),
                                     ("卡名=Yet Unknown 常驻", [50]), ("卡名=Radiant Pass 分类=pass", []),
                                     ("pass", [80])):
@@ -107,6 +110,18 @@ class CardCatalogTests(unittest.TestCase):
                     answer = resolve_command(f"{command} {query}", self.repo).catalog
                     self.assertFalse(answer.error, answer.error)
                     self.assertEqual([c.id for c in answer.cards], expected)
+
+    def test_title_field_rejects_empty_values_and_allows_quoted_punctuation(self):
+        for command, attr, base in (("/查卡", "cards", self.base), ("/查留影卡", "support_cards", self.support)):
+            setattr(self.repo, attr, [replace(base, id=1, title="One, Two"), replace(base, id=2, title=", 限定")])
+            for separator in ",，、|/或":
+                for tail in ("", " 限定"):
+                    with self.subTest(command=command, separator=separator, tail=tail):
+                        result = resolve_command(f"{command} 卡名={separator}{tail}", self.repo)
+                        self.assertEqual(result.status, "invalid_arguments")
+            answer = resolve_command(f'{command} 卡名=","', self.repo).catalog
+            self.assertFalse(answer.error, answer.error)
+            self.assertEqual([card.id for card in answer.cards], [1, 2])
 
     def test_missing_acquisition_explains_the_active_source(self):
         for command in ("/查卡", "/查留影卡"):
