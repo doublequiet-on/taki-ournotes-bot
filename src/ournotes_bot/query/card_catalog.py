@@ -386,6 +386,7 @@ def _card_parts(query, repository, *, support):
             names.update(_card_titles(card))
     names = {normalize(name) for name in names if name}
     max_name = max(map(len, names), default=0)
+    after_title_field = False
     start = 0
     while start < len(query):
         if query[start].isspace():
@@ -393,6 +394,11 @@ def _card_parts(query, repository, *, support):
             continue
         field = _MEMBER_FIELD.match(query, start)
         name_end = start
+        title_fragments = ()
+        if after_title_field and not field and query[start] != '"':
+            # Within 卡名=, protect a continuous source title even when it ends in a filter alias.
+            cards = repository.support_cards if support else repository.cards
+            title_fragments = {normalize(title) for card in cards for title in _card_titles(card) if title}
         if not (field and (field[1] == "卡名" or field[1].casefold() in _CHARACTER_ID_FIELDS)):
             for boundary in _NAME_END.finditer(query, start + 1):
                 stop = boundary.start()
@@ -401,7 +407,7 @@ def _card_parts(query, repository, *, support):
                 spelling = normalize(query[start:stop])
                 if len(spelling) > max_name:
                     break
-                if spelling and spelling in names:
+                if spelling and (spelling in names or any(spelling in title for title in title_fragments)):
                     name_end = stop
         if name_end > start:
             end, kind = name_end, "value"
@@ -417,6 +423,7 @@ def _card_parts(query, repository, *, support):
         else:
             end, kind = _WORD.match(query, start).end(), "value"
         yield start, end, kind, field[1] if kind == "field" else query[start:end]
+        after_title_field = kind == "field" and field[1] == "卡名"
         start = end
 
 
@@ -786,6 +793,9 @@ def execute_card_request(req, repository):
                 missing.update(card_missing)
             else:
                 selected.append(card)
+    if "获取分类" in missing and repository.data_source == "yume":
+        return CardAnswer(req, error="当前数据源 Project Yume 不提供获取分类，此筛选需要 Haneoka 日服卡表。",
+                          status="data_unavailable", cache_state=cache_state)
     if missing == {"获取分类"}:
         return CardAnswer(req, error="当前卡表的获取分类资料不完整，请等待资料同步后重试。",
                           status="data_unavailable", cache_state=cache_state)
