@@ -26,9 +26,11 @@
 
 内存受限的实例可用 `OURNOTES_HERMES_COMPACT_PILOT_GROUP` 指定试点群，并留空优先级更高的 `OURNOTES_HERMES_PILOT_GROUP`。每条队列共用一个进程名额，覆盖启动、待命和执行，使用后再补充。两个队列最多共占两个进程。
 
-点名最多等 Hermes 槽 2 秒，模型调用尚未开始时可以用本次原有许可和费用预留切回 Taki。续聊从入队开始共用 28 秒，覆盖同群锁、模型调度、决策、生成与发送意图许可。已获发送许可的结果仍按原留存规则接收 ACK。主动接话遇到 Taki 调度或 Hermes 执行槽繁忙时跳过；决策已出站时原费用照常结算。
+点名最多等 Hermes 槽 2 秒，模型调用尚未开始时可以用本次原有许可和费用预留切回 Taki。续聊从入队开始共用 28 秒，覆盖同群锁、模型调度、决策、生成与发送意图许可。已获发送许可的结果仍按原留存规则接收 ACK。普通主动接话首次遇到紧凑通道正在补充 worker，且本轮尚未发起模型请求时，沿用网关 5 秒复查一次。调度繁忙、worker 正在工作或复查仍忙时跳过；决策已出站时原费用照常结算。
 
 试点按 `hermes_pilot` 的入口阶段计数，结合 `hermes_native_fallback`、`hermes_continuation_expired` 和 `hermes_proactive_busy` 检查各入口的回退率、超时率和忙时跳过率。实际出站由每个请求的用量记录确认，回退事件可包含未取得授权而终止的请求。
+
+控制事件中，`hermes_refill_deferred` 记录首次等待，`hermes_refill_dispatched` 记录复查取得许可并访问模型，`hermes_refill_still_busy` 记录复查仍忙。最终回复以发送回执为准。
 
 ## A0 回执恢复与批准代际
 

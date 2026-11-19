@@ -10,6 +10,19 @@ from ournotes_bot.sources.haneoka import game_assets
 
 
 class NoteAssetPreparationTests(unittest.TestCase):
+    def test_verified_hard_link_preserves_old_release_after_atomic_replacement(self):
+        from ournotes_bot.sources.haneoka.prepare_catalog_assets import atomic_write, store_artwork
+        source = self.root/'old.png'
+        target = self.root/'new.png'
+        source.write_bytes(b'first')
+        store_artwork(target, b'first', source)
+        self.assertTrue(target.samefile(source))
+        atomic_write(target, b'other')
+        self.assertEqual(source.read_bytes(), b'first')
+        store_artwork(target, b'other', source)
+        self.assertFalse(target.samefile(source))
+        self.assertEqual(target.read_bytes(), b'other')
+
     def test_partial_download_retains_failure_and_retry_only_repairs_that_snapshot(self):
         import io,json
         from types import SimpleNamespace

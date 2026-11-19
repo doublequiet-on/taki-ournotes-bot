@@ -134,6 +134,7 @@ class ProactiveCandidate:
     context_gap_ms: int | None = None
     image_boundary_id: str = ''
     addressed_message_ids: tuple[str, ...] = ()
+    refill_recheck: bool = False
 
 
 @dataclass
@@ -180,6 +181,7 @@ class _Opportunity:
     knowledge_leases: dict = field(default_factory=dict)
     send_interrupted: bool = False
     lightweight: bool = False
+    refill_deferred: bool = False
 
 
 @dataclass
@@ -532,8 +534,19 @@ class ProactiveController:
                                   ticket.service_subject_id, messages,
                                   now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,
                                   opportunity_id=opportunity.id, context_gap_ms=context_gap_ms,
+                                  refill_recheck=opportunity.refill_deferred and opportunity.evaluations == 2,
                                   image_boundary_id=image_boundary_id,
                                   addressed_message_ids=tuple(row.message.message_id for row in rows if row.addressed))
+
+    def allow_refill_recheck(self, candidate):
+        group, ticket = self._ticket(candidate)
+        opportunity = group.opportunity if group else None
+        if (not self.max_defer_rechecks or ticket is None or opportunity is None
+                or ticket.opportunity_id != opportunity.id or opportunity.evaluations != 1
+                or opportunity.refill_deferred or self.clock() + 5 >= candidate.expires_at):
+            return False
+        opportunity.refill_deferred = True
+        return True
 
     def opportunity_budget(self,candidate):
         group,ticket=self._ticket(candidate)

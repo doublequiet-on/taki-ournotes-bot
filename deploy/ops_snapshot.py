@@ -154,7 +154,16 @@ def directory_size(root, deadline):
     return {'bytes':total,'complete':complete}
 
 
-def collect(controller, base, state_dir, output_dir):
+def memory_sample(root=Path('/sys/fs/cgroup/system.slice/taki.service')):
+    try:
+        events = dict(line.split() for line in (root/'memory.events').read_text().splitlines())
+        return {key: int((root/('memory.'+key)).read_text()) for key in ('current','peak')} | {
+            key: int(events[key]) for key in ('high','oom_kill')}
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def collect(controller, base, state_dir, output_dir, *, archive_estimate=None, budget=None):
     now=time.time()
     command=['/usr/bin/systemctl','show',*UNITS,'--no-pager',
              '--property=Id,ActiveState,SubState,MainPID,InvocationID,UnitFileState,NextElapseUSecRealtime,LastTriggerUSec']
@@ -189,7 +198,21 @@ def collect(controller, base, state_dir, output_dir):
         paths={'versions':base/'releases','bundles':state_dir/'bundle-cache','business_data':base/'data',
                'assets':base/'data/haneoka-asset-cache','backups':state_dir/'backups'}
         sizes={'observed_at':now,'directories':{name:directory_size(path,deadline) for name,path in paths.items()}}
+        if archive_estimate is not None:
+            sizes['archive_lower_bound_bytes'] = archive_estimate(base/'data')
         atomic_output(sizes_file,sizes)
+    samples_file=output_dir/'resources-v1.json'
+    try:
+        samples=trusted_json(samples_file).get('samples',[])
+    except (OSError,ValueError):
+        samples=[]
+    if not samples or now-samples[-1]['at']>=300 or now<samples[-1]['at']:
+        sample={'at':int(now),'memory':memory_sample(),
+                'invocation':services.get('taki.service',{}).get('InvocationID'),
+                'free_bytes':disks['backups']['free_bytes'],
+                'archive_lower_bound_bytes':sizes.get('archive_lower_bound_bytes'),'budget_bytes':budget}
+        samples=[row for row in samples[-287:] if now-86400<row['at']<=now]+[sample]
+        atomic_output(samples_file,{'samples':samples})
     backup_root=state_dir/'backups';manifests=[]
     for file in sorted(backup_root.glob('*.json'),key=lambda p:p.stat().st_mtime,reverse=True)[:8]:
         try:manifests.append(trusted_json(file))
@@ -198,7 +221,7 @@ def collect(controller, base, state_dir, output_dir):
     except (OSError,ValueError):receipt=None
     return {'schema':'taki-host-ops-v1','observed_at':now,'controller':project_controller(controller),
             'services':services,'processes':processes,
-            'disk':disks,
+            'disk':disks,'resources':samples[-1],
             'business_recovery':business_recovery(now=now),
             'sizes':sizes,'backup_coverage':coverage(manifests,backup_root,receipt)}
 
@@ -223,13 +246,21 @@ def main():
         info=(control/name).lstat()
         if info.st_uid!=0 or info.st_mode&0o022 or not stat.S_ISREG(info.st_mode):raise ValueError('untrusted_collector')
     sys.path.insert(0,str(control))
-    from linux_backend import trusted,validate_config,status_document
+    from linux_backend import trusted,validate_config,status_document,minimum_data_archive_bytes,backup_file_budget,Rejected
     from linux_updater import Engine
     config=trusted_json(Path('/etc/taki-updater.json'));validate_config(config)
     trusted(Path(config['state_dir']),directory=True)
     output=Path('/run/taki-ops');info=output.lstat()
     if info.st_uid!=0 or info.st_mode&0o022 or not stat.S_ISDIR(info.st_mode):raise ValueError('untrusted_output_directory')
-    row=collect(status_document(Engine(config['state_dir'],backend=None)),Path(config['base']),Path(config['state_dir']),output)
+    def estimate(data):
+        try:
+            if data.is_symlink() or not data.is_dir():
+                return None
+            return minimum_data_archive_bytes(data,deadline=time.monotonic()+2)
+        except (OSError,Rejected):
+            return None
+    row=collect(status_document(Engine(config['state_dir'],backend=None)),Path(config['base']),Path(config['state_dir']),output,
+                archive_estimate=estimate,budget=backup_file_budget(config))
     atomic_output(output/'host-v1.json',row)
 
 

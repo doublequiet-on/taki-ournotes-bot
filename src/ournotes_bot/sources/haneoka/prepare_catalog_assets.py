@@ -15,7 +15,7 @@ from pathlib import Path
 
 from PIL import Image
 from .catalog import validate
-from .catalog_assets import is_catalog_asset, download_asset, asset_url
+from .catalog_assets import is_catalog_asset, download_asset, publish, asset_url
 from .info_catalog import convert_info
 from .ranking_art import cards_for
 from ..errors import ChartDataError
@@ -84,8 +84,26 @@ def atomic_write(path,raw):
     fd,name=tempfile.mkstemp(prefix=path.name+'.',suffix='.tmp',dir=path.parent)
     try:
         with os.fdopen(fd,'wb') as stream:stream.write(raw)
-        os.replace(name,path)
+        publish(name,path)
     finally:Path(name).unlink(missing_ok=True)
+
+
+def store_artwork(path, raw, previous):
+    # Pin the source inode before checking it. Atomic source replacements by
+    # another writer cannot change the bytes we subsequently publish.
+    if previous is not None and previous != path:
+        with tempfile.TemporaryDirectory(dir=path.parent) as staging:
+            linked = Path(staging) / 'image'
+            try:
+                os.link(previous, linked, follow_symlinks=False)
+            except OSError:
+                pass  # A missing source or a filesystem without hard links is fine.
+            else:
+                if not linked.is_symlink() and linked.is_file() and linked.stat().st_size == len(raw):
+                    if linked.read_bytes() == raw:
+                        publish(linked, path)
+                        return
+    atomic_write(path, raw)
 
 
 def prepare(saved,cache_dir,now,*,download=download_asset,workers=6,extra_urls=()):
@@ -97,6 +115,12 @@ def prepare(saved,cache_dir,now,*,download=download_asset,workers=6,extra_urls=(
         except (OSError,ValueError):pass
     urls=tuple(sorted(set(catalog_urls(saved,now)) | set(extra_urls)))
     if not all(is_catalog_asset(url) for url in urls):raise ValueError("Unsupported preparation image")
+    previous_by_digest = {}
+    if not isinstance(prior, dict):
+        prior = {}
+    for old_url, row in prior.items():
+        if isinstance(row, dict) and isinstance(row.get('sha256'), str):
+            previous_by_digest[row['sha256']] = cache / (hashlib.sha256(old_url.encode()).hexdigest()+'.png')
     def one(url):
         path=cache/(hashlib.sha256(url.encode()).hexdigest()+'.png')
         if path.is_file() and path.stat().st_size<=6_000_000:
@@ -113,7 +137,7 @@ def prepare(saved,cache_dir,now,*,download=download_asset,workers=6,extra_urls=(
                 break
             except (OSError,ChartDataError):
                 if attempt:raise
-        atomic_write(path,raw)
+        store_artwork(path, raw, previous_by_digest.get(digest))
         return url,{'sha256':digest,'bytes':len(raw),'file':path.name}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         assets=dict(pool.map(one,urls))

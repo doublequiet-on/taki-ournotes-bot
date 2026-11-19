@@ -53,6 +53,35 @@ def offline_ci_artifact_name(bundle_hash: str, knowledge_hash: str) -> str:
     return "linux-offline-tested-v1-" + tested
 
 
+def minimum_data_archive_bytes(data: Path, *, deadline=None) -> int:
+    """Metadata-only tar lower bound shared by monitoring and release admission."""
+    size, seen = 512 + 1024, set()  # data directory header and end blocks
+
+    def unavailable(error):
+        raise error
+
+    try:
+        for parent, dirs, files in os.walk(data, followlinks=False, onerror=unavailable):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("backup estimate deadline")
+            dirs[:] = [n for n in dirs if n != '.env'
+                       and not (Path(parent) == data and n == 'haneoka-asset-cache')]
+            size += len(dirs) * 512
+            for name in files:
+                if name == '.env' or (Path(parent) == data and name == 'haneoka-asset-cache'):
+                    continue
+                info = (Path(parent) / name).lstat()
+                size += 512
+                key = (info.st_dev, info.st_ino)
+                if stat.S_ISREG(info.st_mode) and key not in seen:
+                    seen.add(key)
+                    size += ((info.st_size + 511) // 512) * 512
+        minimum = ((size + 10239) // 10240) * 10240
+    except OSError as exc:
+        raise Rejected("backup_preflight_unavailable") from exc
+    return minimum
+
+
 def backup_file_budget(config: dict) -> int:
     """Only backup tar files may opt into a larger, explicitly bounded budget."""
     value = config.get('backup_file_budget_bytes', 2 * GIB)
@@ -936,28 +965,7 @@ class LinuxBackend:
             return  # Code-only preparation; stopped snapshot still requires data.
         if data.is_symlink() or data.resolve() != data or not data.is_dir():
             raise Rejected("shared_data_path_changed")
-        size, seen = 512 + 1024, set()  # data directory header and end blocks
-
-        def unavailable(error):
-            raise error
-
-        try:
-            for parent, dirs, files in os.walk(data, followlinks=False, onerror=unavailable):
-                dirs[:] = [n for n in dirs if n != '.env'
-                           and not (Path(parent) == data and n == 'haneoka-asset-cache')]
-                size += len(dirs) * 512
-                for name in files:
-                    if name == '.env' or (Path(parent) == data and name == 'haneoka-asset-cache'):
-                        continue
-                    info = (Path(parent) / name).lstat()
-                    size += 512
-                    key = (info.st_dev, info.st_ino)
-                    if stat.S_ISREG(info.st_mode) and key not in seen:
-                        seen.add(key)
-                        size += ((info.st_size + 511) // 512) * 512
-            minimum = ((size + 10239) // 10240) * 10240
-        except OSError as exc:
-            raise Rejected("backup_preflight_unavailable") from exc
+        minimum = minimum_data_archive_bytes(data)
         if minimum > self.backup_file_budget_bytes:
             raise Rejected("data_backup_file_budget")
         if shutil.disk_usage(self.backups).free < minimum + 2 * GIB:

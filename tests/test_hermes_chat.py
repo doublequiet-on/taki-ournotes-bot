@@ -31,7 +31,11 @@ class CompactStandbyTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(acquired, worker)
             self.assertFalse(lane.initializing)
             self.assertFalse(lane.ready)
+            with self.assertRaisesRegex(Exception, '^chat_hermes_busy$'):
+                await lane.claim(asyncio.get_running_loop().time()+2, priority=1, wait=False)
             await lane.release(acquired)
+            with self.assertRaisesRegex(Exception, '^chat_hermes_refilling$'):
+                await lane.claim(asyncio.get_running_loop().time()+2, priority=1, wait=False)
             await asyncio.gather(*lane.initializing)
             self.assertEqual(prepare.await_count, 2)
             self.assertEqual(len(lane.ready), 1)

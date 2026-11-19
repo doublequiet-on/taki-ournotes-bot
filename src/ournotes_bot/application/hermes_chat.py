@@ -274,7 +274,7 @@ class HermesChat:
                 directory = self.directory(request_key)
                 returned = await self.worker(run, directory, request_key, profile, body, deadline, dispatch)
         except ProtocolError as exc:
-            if exc.code=='chat_hermes_busy':
+            if exc.code in ('chat_hermes_busy', 'chat_hermes_refilling'):
                 require(not self.cleanup_failed, 'chat_hermes_cleanup_failed', 503)
                 validate()
             raise

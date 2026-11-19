@@ -450,8 +450,16 @@ class ModelRuntime:
             code=('execution_timeout' if isinstance(exc,asyncio.TimeoutError) else
                   exc.code if isinstance(exc,ProtocolError) else str(exc))
             if (work.hermes_pilot and work.proactive is not None and not work.continuation
-                    and code in ('model_queue_busy','chat_hermes_busy') and self.agent.proactive.valid(work)):
-                self.agent.proactive.trace(work,'control',status='hermes_proactive_busy',
+                    and code in ('model_queue_busy','chat_hermes_busy','chat_hermes_refilling')
+                    and self.agent.proactive.valid(work)):
+                if (code == 'chat_hermes_refilling' and not work.hermes_provider_started
+                        and not work.proactive.evidence_route
+                        and self.agent.proactive.controller.allow_refill_recheck(work.proactive)):
+                    self.agent.proactive.trace(work,'control',status='hermes_refill_deferred')
+                    self.agent.proactive.decision(work,'{"participation":"defer","delay_seconds":5}')
+                    return replies.PreparedReply('',business_status='proactive_defer')
+                status = 'hermes_refill_still_busy' if work.proactive.refill_recheck else 'hermes_proactive_busy'
+                self.agent.proactive.trace(work,'control',status=status,
                     source='scheduler' if code=='model_queue_busy' else 'worker')
                 self.agent.proactive.decision(work,'{"participation":"skip"}')
                 return replies.PreparedReply('',business_status='proactive_skip')
@@ -601,6 +609,8 @@ class ModelRuntime:
             except ServiceError as exc:
                 self.proactive_charge_denied(work,exc)
             started=True
+            refill_dispatch = (getattr(work,'hermes_chat',False) and work.proactive is not None
+                               and work.proactive.refill_recheck and not work.hermes_provider_started)
             if getattr(work,'hermes_chat',False):
                 work.hermes_provider_started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
@@ -611,6 +621,8 @@ class ModelRuntime:
                     return await asyncio.wait_for(self.client.request(profile,body,timeout=remaining,transport=transport),remaining)
                 finally:
                     marks['http_done'] = time.monotonic()
+                    if refill_dispatch:
+                        self.agent.proactive.trace(work,'control',status='hermes_refill_dispatched')
             result=await send()
             if (getattr(work,'chat',False) and work.proactive is None and work.request.kind=='group'
                     and result.error_code=='provider_unavailable' and transport.get('tls_failed_before_send')

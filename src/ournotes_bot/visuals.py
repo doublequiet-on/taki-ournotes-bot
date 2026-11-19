@@ -374,7 +374,7 @@ def _fixed_icon_bytes(url: str, referer: str) -> bytes:
 
 
 def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bool = False, fetch=None) -> Image.Image | None:
-    from .sources.haneoka.catalog_assets import is_catalog_asset, download_asset
+    from .sources.haneoka.catalog_assets import is_catalog_asset, download_asset, publish
     catalog_asset = is_catalog_asset(url)
     icons = {f"{BASE}/images/CardType{i}.webp" for i in range(1, 6)}
     music_jacket = re.fullmatch(r"https://assets\.bdon\.moe/ja/Image/Jacket/([A-Za-z0-9_-]+)/\1\.webp", url)
@@ -430,7 +430,10 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bo
             with tempfile.NamedTemporaryFile(dir=cache, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
                 temporary = Path(stream.name)
                 stream.write(raw)
-            os.replace(temporary, path)
+            if catalog_asset:
+                publish(temporary, path)
+            else:
+                os.replace(temporary, path)
         except Exception:
             decoded.close()
             raise
