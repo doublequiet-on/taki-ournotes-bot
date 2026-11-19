@@ -1369,6 +1369,19 @@ class ProactiveControllerTests(unittest.TestCase):
         self.assertEqual(second.reserved_cost_micro,83)
         self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],100)
 
+    def test_compact_refill_has_only_one_recheck_per_opportunity(self):
+        self.observe()
+        first = self.ready()
+        self.assertTrue(self.controller.allow_refill_recheck(first))
+        self.assertFalse(self.controller.allow_refill_recheck(first))
+        self.controller.decide(first, 'defer', defer_seconds=5, actual_cost_micro=0)
+        self.now[0] += 4.9
+        self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
+        self.now[0] += 0.2
+        second = self.controller.candidate(self.a, reserve_cost_micro=100)
+        self.assertTrue(second.refill_recheck)
+        self.assertFalse(self.controller.allow_refill_recheck(second))
+
     def test_defer_is_version_bound_and_has_at_most_two_rechecks(self):
         self.observe()
         candidate = self.ready()

@@ -5,6 +5,8 @@
 # Effects/Dependencies: Anonymous Haneoka GET only; no redirects or other-source retry.
 
 from urllib.parse import parse_qs, urlsplit
+from contextlib import contextmanager
+import os
 import re
 
 from .transport import ORIGIN, public_get
@@ -71,3 +73,24 @@ def download_asset(url, *, timeout=12):
     if headers.get("x-haneoka-release-id") != release or not headers.get("x-haneoka-source-id"):
         raise ValueError("Haneoka image release mismatch")
     return raw
+
+
+@contextmanager
+def cache_lock(directory, *, exclusive):
+    if os.name == 'nt':
+        if exclusive:
+            raise OSError('Online artwork deduplication requires POSIX directory locks')
+        yield
+        return
+    import fcntl
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        yield
+    finally:
+        os.close(fd)
+
+
+def publish(temporary, path):
+    with cache_lock(path.parent, exclusive=False):
+        os.replace(temporary, path)

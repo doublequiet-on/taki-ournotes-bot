@@ -66,6 +66,9 @@ class StandbyLane:
                         continue
                     self.refill()
                     if not wait:
+                        if (self.compact and self.capacity > 0 and not self.running and not self.ready
+                                and any(not task.done() for task in self.initializing)):
+                            raise ProtocolError('chat_hermes_refilling', 503)
                         break
                     try:
                         await asyncio.wait_for(self.changed.wait(), deadline-monotonic())
