@@ -6276,30 +6276,58 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('PRIVATE_PICTURE',persisted);self.assertNotIn('base64,',persisted)
 
     async def test_hermes_visual_reply_needs_only_one_provider_permit(self):
+        await self.check_hermes_visual_budget('reply')
+
+    async def test_hermes_visual_skip_uses_the_same_image_budget(self):
+        await self.check_hermes_visual_budget('skip')
+
+    async def check_hermes_visual_budget(self, decision):
+        from ournotes_bot.application.chat_capabilities import VisionCapability
+
         runtime = self.backend.model_runtime
         runtime.hermes.pilot_group = 'g1'
         attachments = self.proactive_picture()
-        self.observation('', attachments=attachments)
-        self.now += .01
-        value = self.observation('又有人达到了这个等级', seq=2)
+        runtime.capabilities.vision.return_value = VisionCapability(4096, 'low', 'fixture-vision')
+        self.snapshot = replace(self.snapshot, profile=replace(self.snapshot.profile, max_input_tokens=32768,
+                                user_daily_limit=10**7, group_daily_limit=10**7))
+        self.agent.story = Mock()
+        self.agent.story.persona_selection.return_value = (dict(persona_id='fixture', persona_sha256='a'*64,
+            source_revision='b'*64, revocation_revision=0, prompt='已审核的群聊口吻。'*120), 'approved')
+        self.agent.story.valid.return_value = True
+        value = self.observation('', attachments=attachments)
+        answer = dict(participation=decision, text='', delay_seconds=None, target_message_id=None,
+                      anchor_message_ids=[], reply_kind=None)
+        if decision == 'reply':
+            self.now += .01
+            value = self.observation('又有人达到了 TGW 21', seq=2)
+            answer.update(text='又多了一枚徽章！', target_message_id='observed2',
+                          anchor_message_ids=['observed1'], reply_kind='react')
         self.tick += 1.6
-        answer = dict(participation='reply', text='又多了一枚徽章！', delay_seconds=None,
-                      target_message_id='observed2', anchor_message_ids=['observed1'], reply_kind='react')
         async def dispatch_worker(work, profile, body, deadline, validate, dispatch):
             validate()
             self.assertEqual(body['text']['format']['name'], 'proactive_one_pass')
-            self.assertEqual(sum(p.get('type') == 'input_image' for row in body['input']
-                                 if isinstance(row.get('content'), list) for p in row['content']), 1)
+            self.assertFalse(body.get('tools'))
+            self.assertIn('已审核的群聊口吻', body['input'][0]['content'])
+            visual, = [item for row in body['input'] if isinstance(row.get('content'), list)
+                       for item in row['content'] if item.get('type') == 'input_image']
+            self.assertEqual(visual['detail'], 'low')
+            self.assertTrue(visual['image_url'].startswith('data:image/png;base64,'))
             return await dispatch()
 
         self.client.request.return_value = self.result(json.dumps(answer, ensure_ascii=False))
         with patch.object(runtime.admin, 'hermes_route', return_value=True), patch.object(
                 runtime.hermes, 'request', side_effect=dispatch_worker):
             plan, attempts, _ = await self.candidate(value)
+        errors = [e['data'] for e in self.backend.diagnostics.read(plan['request_id'])['chat_events']
+                  if e['kind'] == 'error']
+        self.assertEqual(errors, [])
         self.assertEqual(len(attempts), 1)
         self.assertEqual(self.client.request.call_count, 1)
-        self.assertTrue(plan['send_allowed'], plan)
-        self.assertEqual(plan['parts'][0]['text'], answer['text'])
+        if decision == 'reply':
+            self.assertTrue(plan['send_allowed'], plan)
+            self.assertEqual(plan['parts'][0]['text'], answer['text'])
+        else:
+            self.assertEqual(plan['parts'], [])
 
     async def test_proactive_picture_survives_context_trimming(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
