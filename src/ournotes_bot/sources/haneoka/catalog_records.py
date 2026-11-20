@@ -338,6 +338,7 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                 raise ValueError("card stat identity mismatch")
             lv1 = level1(row, jp["progression"], support)
             catalog = {"source": "haneoka", "release": release, "source_id": source_id, "fetched_at": fetched_at,
+                       "acquisition": row.get("type"),
                        "attribute_icon": attribute_url(jp.get("ui-marks", {}), row.get("cardType"), release),
                        "character_ids": char_ids, "character_links_complete": links_ready, "band_ids": band_ids,
                        "bands": [language(b) for b in band_names], "categories": cats, "skill_evidence": evidence,

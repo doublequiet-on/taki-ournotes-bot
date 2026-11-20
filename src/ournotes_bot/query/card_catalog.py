@@ -23,6 +23,7 @@ LIVE = {"score": "分数提升", "life": "LIFE回复", "judgement": "判定强�
 PAGE_SIZE = 16
 _FIELDS = {"稀有度": "rarity", "星级": "rarity", "rarity": "rarity",
            "颜色": "type", "属性": "type", "类型": "type", "type": "type",
+           **dict.fromkeys(("分类", "分類", "获取", "獲取", "获取方式", "獲取方式", "获取分类", "獲取分類"), "acquisition"),
            "乐队": "band", "band": "band", "角色": "character", "character": "character",
            "live": "live", "击奏": "gekisou", "激奏": "gekisou", "gekisou": "gekisou",
            "得意": "tags", "得意乐曲": "tags", "tags": "tags"}
@@ -48,6 +49,8 @@ _SEPARATORS = ",，、|/或"
 _NAME_END = re.compile(rf"(?=$|[\s{re.escape(_SEPARATORS)}])")
 _MEMBER_FIELD = re.compile(rf"([^\s=:{re.escape(_SEPARATORS)}]+)\s*[=:]\s*")
 _WORD = re.compile(rf"[^\s{re.escape(_SEPARATORS)}]+")
+_PLAIN_TITLE_WORD = rf'[^\s=:"{re.escape(_SEPARATORS)}]+'
+_MULTIWORD_TITLE = re.compile(rf"{_PLAIN_TITLE_WORD}(?:\s+{_PLAIN_TITLE_WORD})+")
 _QUOTED_TITLE = re.compile(r'"([^"]*)"')
 _UNRESTRICTED = {"全部", "不限", "すべて"}
 _COLOURS = {"红": 1, "蓝": 2, "绿": 3, "黄": 4, "紫": 5}
@@ -58,6 +61,39 @@ _MEMBER_RARITY = re.compile(
     rf"(?:至少|至多|最多|不低于|不高于|超过|低于|高于|大于|小于|[<>≤≥+\-])?"
     rf"{_RARITY_NUMBER}(?:[\-~至到]{_RARITY_NUMBER})?(?:星(?:级)?|[★☆]|-?stars?)"
     r"(?:及?以上|及?以下|以内|起)?)", re.I)
+
+
+# The API value "limited" selects one type. The Chinese umbrella keywords also include birthdays and DreamFes.
+_ACQUISITION_ALIASES = {
+    alias: kind for kind, aliases in {
+        "permanent": "permanent perm 常驻 常駐 常驻卡 常駐卡 普池 普池卡 无期限 無期限",
+        "limited": "limited lim 期限 普通限定",
+        "birthday": "birthday 生日限定 生日 生日卡 生限 bd",
+        "event": "event 活动 活動 活动卡 活動卡 活动奖励 活動獎勵 活动报酬 活動報酬 活卡",
+        "pass": "pass 通行证 通行證 通行证卡 通行證卡",
+        "gift": "gift 赠送 贈送 赠送卡 贈送卡 赠卡 贈卡 赠品 贈品 配布",
+        "dreamfes": "dreamfes dreamfestival dfes df fes fes限定 梦限 夢限 梦祭 夢祭 梦祭限定 夢祭限定 梦幻fes 夢幻fes",
+        "campaign": "campaign collab 联动 聯動 联动卡 聯動卡 联动限定 聯動限定 合作卡 联名合作 聯名合作",
+        "unknown": "unknown 未知 未分类 未分類 分类未确认 分類未確認",
+    }.items() for alias in aliases.split()
+}
+_LIMITED_GROUP = {"限定", "限定卡", "期间限定", "期間限定"}
+_ACQUISITION_TYPES = frozenset(_ACQUISITION_ALIASES.values())
+
+
+def _acquisition_values(value, field):
+    if field not in (None, "acquisition") or value in _UNRESTRICTED:
+        return ()
+    if value in _LIMITED_GROUP:
+        return ("limited", "birthday", "dreamfes")
+    token = value.casefold()
+    if token == "bd" and field is None:
+        return ()  # Bare BD is a rarity in the existing grammar.
+    if token in _ACQUISITION_ALIASES:
+        return (_ACQUISITION_ALIASES[token],)
+    if field == "acquisition":
+        raise ValueError(f"无法识别获取分类“{value}”；例如 分类=期限 或 分类=通行证,赠送。")
+    return ()
 
 
 class UnknownCardEntity(ValueError):
@@ -337,21 +373,22 @@ def _card_filter(value, key, repository, *, support=False):
 def _card_parts(query, repository, *, support):
     # Protect complete source names before treating punctuation or spaces as syntax.
     names = set(card_alias_spellings(support=support))
+    source = repository.support_cards if support else repository.cards
+    titles = {normalize(title) for card in source for title in _card_titles(card) if title}
     for card in repository.cards:
         names.update((card.character, card.band))
         names.update(card.localized.get("character", {}).values())
         names.update(card.localized.get("band", {}).values())
         if not support:
-            names.update(_card_titles(card))
             for tag_names in card.catalog.get("tags", {}).values():
                 names.update(tag_names.values())
     for card in repository.support_cards:
         names.update(card.characters)
         names.update(card.catalog.get("bands", ()))
-        if support:
-            names.update(_card_titles(card))
-    names = {normalize(name) for name in names if name}
+    names = {normalize(name) for name in names if name} | titles
     max_name = max(map(len, names), default=0)
+    after_title_field = False
+    bare_value = True
     start = 0
     while start < len(query):
         if query[start].isspace():
@@ -359,15 +396,20 @@ def _card_parts(query, repository, *, support):
             continue
         field = _MEMBER_FIELD.match(query, start)
         name_end = start
-        if not (field and (field[1] == "卡名" or field[1].casefold() in _CHARACTER_ID_FIELDS)):
+        explicit_field = field and (field[1] == "卡名" or field[1].casefold() in _CHARACTER_ID_FIELDS)
+        standalone_separator = query[start] in _SEPARATORS and _NAME_END.match(query, start + 1)
+        if not explicit_field and not standalone_separator and not (after_title_field and query[start] == '"'):
             for boundary in _NAME_END.finditer(query, start + 1):
                 stop = boundary.start()
                 if query[stop - 1].isspace():
                     continue
-                spelling = normalize(query[start:stop])
+                candidate = query[start:stop]
+                spelling = normalize(candidate)
                 if len(spelling) > max_name:
                     break
-                if spelling and spelling in names:
+                fragment = (after_title_field and query[start] not in _SEPARATORS
+                            or bare_value and _MULTIWORD_TITLE.fullmatch(candidate))
+                if spelling and (spelling in names or (fragment and any(spelling in title for title in titles))):
                     name_end = stop
         if name_end > start:
             end, kind = name_end, "value"
@@ -383,6 +425,8 @@ def _card_parts(query, repository, *, support):
         else:
             end, kind = _WORD.match(query, start).end(), "value"
         yield start, end, kind, field[1] if kind == "field" else query[start:end]
+        after_title_field = kind == "field" and field[1] == "卡名"
+        bare_value = kind not in {"field", "separator"}
         start = end
 
 
@@ -440,8 +484,8 @@ def _parse_direct_filters(query, page, repository, *, support):
             field_name = value
             field = fields.get(value.casefold())
             if field is None:
-                available = ("ID、卡名、稀有度、颜色、乐队、角色、角色ID、LIVE、击奏" if support
-                             else "ID、卡名、稀有度、颜色、乐队、角色、角色ID、队长、演出、击奏、得意")
+                available = ("ID、卡名、稀有度、颜色、获取分类、乐队、角色、角色ID、LIVE、击奏" if support
+                             else "ID、卡名、稀有度、颜色、获取分类、乐队、角色、角色ID、队长、演出、击奏、得意")
                 raise ValueError(f"未知筛选维度“{value}”；可用 {available}。")
             pending = True
             continue
@@ -465,6 +509,8 @@ def _parse_direct_filters(query, page, repository, *, support):
             if not value.isdecimal() or explicit_id is not None:
                 raise ValueError("详情查询只能指定一个卡牌 ID。")
             explicit_id = int(value)
+        elif kinds := _acquisition_values(value, key):
+            filters.setdefault("acquisition", []).extend(kinds)
         elif snap_live and key in (None, "live"):
             add("live", snap_live)
             field = "live"
@@ -596,7 +642,7 @@ def parse_card_request(query, repository, *, support=False, art=False, direct_co
     for i, match in enumerate(fields):
         key = _FIELDS.get(match[1].lower())
         if not key:
-            raise ValueError(f"未知筛选维度“{match[1]}”；可用：稀有度、颜色、乐队、角色、LIVE、击奏、得意。")
+            raise ValueError(f"未知筛选维度“{match[1]}”；可用：稀有度、颜色、获取分类、乐队、角色、LIVE、击奏、得意。")
         value = query[match.end():fields[i + 1].start() if i + 1 < len(fields) else len(query)].strip()
         if not value:
             raise ValueError(f"{match[1]}缺少筛选值。")
@@ -605,6 +651,9 @@ def parse_card_request(query, repository, *, support=False, art=False, direct_co
         for value in re.split(r"[,，、|/]|或", values):
             value = value.strip()
             if value in _UNRESTRICTED:
+                continue
+            if kinds := _acquisition_values(value, key):
+                filters.setdefault("acquisition", []).extend(kinds)
                 continue
             dimension = key or _bare_filter(value, legacy=True)
             if dimension is not None:
@@ -682,6 +731,12 @@ def execute_card_request(req, repository):
                 match = card.rarity in values
             elif key == "type":
                 match = card.card_type in values
+            elif key == "acquisition":
+                kind = card.catalog.get("acquisition")
+                if not isinstance(kind, str) or kind not in _ACQUISITION_TYPES:
+                    card_missing.add("获取分类")
+                    unknown = True
+                match = kind in values
             elif key == "title_ids":
                 match = card.id in values
             elif key == "character":
@@ -741,6 +796,12 @@ def execute_card_request(req, repository):
                 missing.update(card_missing)
             else:
                 selected.append(card)
+    if "获取分类" in missing and repository.data_source == "yume":
+        return CardAnswer(req, error="当前数据源 Project Yume 不提供获取分类，此筛选需要 Haneoka 日服卡表。",
+                          status="data_unavailable", cache_state=cache_state)
+    if missing == {"获取分类"}:
+        return CardAnswer(req, error="当前卡表的获取分类资料不完整，请等待资料同步后重试。",
+                          status="data_unavailable", cache_state=cache_state)
     if missing:
         return CardAnswer(req, error="卡牌索引不完整（" + "、".join(sorted(missing)) + "），不能保证完整筛选；请等待数据同步后重试，未将未知分类当作无技能。", status="data_unavailable", cache_state=cache_state)
     if req.mode == "detail" and selected:
