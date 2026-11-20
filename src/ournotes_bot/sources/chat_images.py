@@ -177,8 +177,9 @@ _QUERY_IMAGE = re.compile(
 
 
 class SentQueryImages:
-    """Bounded, short-lived copies of successfully delivered group query images."""
-    def __init__(self):
+    """Short-lived group query bytes, with exact disk lookup for delivered infographics."""
+    def __init__(self, infographics=None):
+        self.infographics = infographics
         self.entries = OrderedDict()
         self.byte_count = 0
 
@@ -190,11 +191,13 @@ class SentQueryImages:
             self.entries.popitem(last=False)
             self.byte_count -= len(data)
 
-    def remember(self, scope, data):
+    def remember(self, scope, data, infographic_name=None):
         if not data or len(data) > MAX_IMAGE_BYTES:
             return
         now = time.monotonic()
         key = (scope, hashlib.md5(data, usedforsecurity=False).hexdigest())
+        if infographic_name and self.infographics:
+            self.infographics.remember_delivery(scope, key[1], infographic_name, data)
         previous = self.entries.pop(key, None)
         if previous:
             self.byte_count -= len(previous[1])
@@ -207,15 +210,17 @@ class SentQueryImages:
         marker = _QUERY_IMAGE.match(preview or '')
         return preview[marker.end():].strip() if marker else None
 
-    def match(self, scope, preview):
+    async def match(self, scope, preview):
         marker = _QUERY_IMAGE.match(preview or '')
         if not marker:
             return None
         self.prune(time.monotonic())
         entry = self.entries.get((scope, marker[3]))
-        if entry is None:
+        data = entry[1] if entry else None
+        if data is None and self.infographics:
+            data = await asyncio.to_thread(self.infographics.delivered_image, scope, marker[3])
+        if data is None:
             return None
-        data = entry[1]
         try:
             with Image.open(BytesIO(data)) as image:
                 width, height = image.size

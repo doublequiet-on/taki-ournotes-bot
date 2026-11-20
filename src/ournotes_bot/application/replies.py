@@ -134,6 +134,7 @@ class PreparedReply:
     evidence_deadline: float | None = None  # Monotonic; never extended by delivery/ACK.
     keep_text_lines: bool = False
     image_commands: tuple[str, ...] = ()
+    infographic_name: str | None = None
 
     @property
     def passive_slots(self):
@@ -580,11 +581,12 @@ def infographic_reply(content):
     from ..config import runtime_data_dir
     from ..sources.activity_infographic_store import ActivityInfographicStore
     try:
-        text, image, status = ActivityInfographicStore(runtime_data_dir() / 'activity-infographic').lookup()
+        store = ActivityInfographicStore(runtime_data_dir() / 'activity-infographic')
+        text, image, status, name = store.lookup_with_name()
     except (OSError, ValueError, TypeError) as exc:
         logger.warning('活动一图流读取失败 type=%s', type(exc).__name__)
-        text, image, status = '活动一图流暂时不可用，请稍后重试。', None, 'data_unavailable'
-    return PreparedReply(text, image, complete_text=True, business_status=status,
+        text, image, status, name = '活动一图流暂时不可用，请稍后重试。', None, 'data_unavailable', None
+    return PreparedReply(text, image, complete_text=True, business_status=status, infographic_name=name,
                          parse_origin='direct', processing_route='direct')
 
 

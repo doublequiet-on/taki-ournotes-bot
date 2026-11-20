@@ -15,11 +15,13 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 from urllib.parse import urlsplit, unquote, parse_qsl
 
+from ..config import runtime_data_dir
 from ..domain.chat import ChatMessage, PERSONA, PERSONA_VERSION, TurnBudget, COMMUNITY_TERMS
 from ..domain.knowledge import KnowledgeError
 from ..domain.model_calls import ModelError, ToolCall, require
 from ..domain.story import StoryError
 from ..domain.chat_images import ImageError, MAX_TOTAL_BYTES
+from ..sources.activity_infographic_store import ActivityInfographicStore
 from ..sources.chat_images import ImageLoader,ImageCache,SentQueryImages
 from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for, scope_mentions, requested_server, chat_query_question, chat_background_only
 from ..natural_query.query_validation import EntityEvidence
@@ -451,7 +453,7 @@ class ChatAgent:
         self.story=StoryService(root) if root else None
         self.image_loader=ImageLoader()
         self.images=ImageCache()
-        self.sent_query_images=SentQueryImages()
+        self.sent_query_images=SentQueryImages(ActivityInfographicStore(runtime_data_dir() / 'activity-infographic'))
         self.services=ChatServices(path.parent,runtime.backend.instance_id,runtime.backend.app_id,
             authority=runtime.admin.db,require_authority=True)
         self.service_budget=ServiceBudget(runtime.usage,runtime.backend.instance_id,runtime.backend.app_id)
@@ -610,18 +612,19 @@ class ChatAgent:
     async def read_unlinked_quote_images(self,work,deadline):
         request=work.request
         cached=()
-        if not request.quoted_attachments:
-            if (not request.quoted_text or request.reference or request.kind!='group' or request.trigger!='command'
-                    or request.policy.natural_query!='model'):
-                return None
-            image=self.sent_query_images.match(self.image_scope(request),request.quoted_text)
-            if image is None:return None
-            cached=(image,)
+        if not request.quoted_attachments and (
+                not request.quoted_text or request.reference or request.kind!='group' or request.trigger!='command'
+                or request.policy.natural_query!='model'):
+            return None
         if not self.store.unlinked_quote_media_allowed(request.scope):
             return None
         vision=self.runtime.capabilities_for(work).vision(work.model_snapshot)
         if vision is None:
             return None
+        if not request.quoted_attachments:
+            image=await self.sent_query_images.match(self.image_scope(request),request.quoted_text)
+            if image is None:return None
+            cached=(image,)
         try:
             added_count=sum(len(self.images.get(self.image_scope(request),mid).attachments)
                             for mid in work.chat_addition_images)
