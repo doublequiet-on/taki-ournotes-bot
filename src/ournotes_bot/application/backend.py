@@ -790,7 +790,7 @@ class Backend:
                 if (not work.chat and work.request.kind=='group' and part['mode']=='primary'
                         and payload['result']=='success' and reply.image and self.model_runtime and self.model_runtime.agent):
                     agent = self.model_runtime.agent
-                    agent.sent_query_images.remember(agent.image_scope(work.request), reply.image)
+                    agent.sent_query_images.remember(agent.image_scope(work.request), reply.image, reply.infographic_name)
                 candidate = reply.context
                 text_limit = 1500 if work.request.kind == 'group' else 1800
                 long_fallback = part['mode'] == 'fallback' and len(reply.text) > text_limit

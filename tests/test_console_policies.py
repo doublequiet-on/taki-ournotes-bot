@@ -5525,12 +5525,12 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         scope=json.dumps(Request_scope(),sort_keys=True,separators=(',',':'))
         with patch.object(self.backend.gate.prepare,'return_value',PreparedReply('查询结果',data)):
             original,_=await self.prepare_native('/一图流',seq=1)
-        self.assertIsNone(agent.sent_query_images.match(scope,preview))
+        self.assertIsNone(await agent.sent_query_images.match(scope,preview))
         self.event(original,'intent');self.event(original,'ack')
-        self.assertIsNotNone(agent.sent_query_images.match(scope,preview))
+        self.assertIsNotNone(await agent.sent_query_images.match(scope,preview))
         raw={**self.request('native2',2),'quoted_text':preview}
-        self.assertIsNone(agent.sent_query_images.match('another-group',preview))
-        self.assertIsNone(agent.sent_query_images.match(scope,preview.replace('#16px','#17px')))
+        self.assertIsNone(await agent.sent_query_images.match('another-group',preview))
+        self.assertIsNone(await agent.sent_query_images.match(scope,preview.replace('#16px','#17px')))
         bodies=self.capture_native_bodies()
         self.client.request.return_value=self.result('蓝色。')
         with patch.object(self,'request',return_value=raw):
@@ -5543,7 +5543,64 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('ugcimg.cn',json.dumps(bodies[0]))
         self.event(plan,'intent');self.event(plan,'ack')
         with patch('ournotes_bot.sources.chat_images.time.monotonic',return_value=float('inf')):
-            self.assertIsNone(agent.sent_query_images.match(scope,preview))
+            self.assertIsNone(await agent.sent_query_images.match(scope,preview))
+
+    async def test_old_infographic_quote_reads_only_acknowledged_group_file(self):
+        import base64
+        import hashlib
+        from io import BytesIO
+        from PIL import Image
+        from ournotes_bot.sources.activity_infographic_store import ActivityInfographicStore, ActivityPeriod
+        from ournotes_bot.sources.chat_images import SentQueryImages
+
+        self.attachments = []
+        agent = self.backend.model_runtime.agent
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        store = ActivityInfographicStore(root / 'activity-infographic')
+        period = ActivityPeriod('6', '旧活动', 1000, 2000)
+        buffer = BytesIO()
+        Image.new('RGB', (16, 24), 'blue').save(buffer, format='JPEG')
+        data = buffer.getvalue()
+        store.publish(period, data)
+        store.observe(period)
+        agent.sent_query_images = SentQueryImages(store)
+        digest = hashlib.md5(data, usedforsecurity=False).hexdigest()
+        preview = f"![查询结果 #16px #24px](https://qqbot.ugcimg.cn/1234567890/qqbot-media/{'a'*40}/{digest})"
+        scope = json.dumps(Request_scope(), sort_keys=True, separators=(',', ':'))
+        del self.backend.gate.prepare  # Restore the real query gate for /一图流.
+        with patch('ournotes_bot.config.runtime_data_dir', return_value=root):
+            original, _ = await self.prepare_native('/一图流')
+        self.assertFalse(store.receipts_path.exists())
+        self.event(original, 'intent')
+        self.event(original, 'ack')
+        self.assertTrue(store.receipts_path.exists())
+
+        # A fresh agent has no five-minute cache. A later event is current now.
+        fresh = SentQueryImages(ActivityInfographicStore(store.directory))
+        agent.sent_query_images = fresh
+        store.observe(ActivityPeriod('7', '新活动', 2000, 3000))
+        self.assertIsNone(await fresh.match('other-group', preview))
+        self.assertIsNone(await fresh.match(scope, '[图片]'))
+        self.assertIsNone(await fresh.match(scope, preview.replace('#16px', '#17px')))
+        self.assertIsNone(await fresh.match(scope, preview.replace(digest, '0'*32)))
+        bodies = self.capture_native_bodies()
+        self.client.request.return_value = self.result('这张图是蓝色的。')
+        raw = {**self.request('native2', 2), 'quoted_text': preview}
+        with patch.object(self, 'request', return_value=raw):
+            plan, _ = await self.prepare_native('taki这卡这么给就对了', seq=2)
+        self.assertEqual(plan['parts'][0]['business_status'], 'success')
+        urls = [part['image_url'] for row in bodies[0]['input'] if isinstance(row.get('content'), list)
+                for part in row['content'] if part['type']=='input_image']
+        self.assertEqual(urls, ['data:image/jpeg;base64,'+base64.b64encode(data).decode()])
+        self.event(plan, 'intent')
+        self.event(plan, 'ack')
+
+        store.publish(period, data[:-2] + b'changed' + data[-2:])
+        self.assertIsNone(await fresh.match(scope, preview))
+        (store.directory / period.image_name).unlink()
+        self.assertIsNone(await fresh.match(scope, preview))
 
     async def test_qq_quote_attachment_reaches_model_without_publishing_unlinked_material(self):
         quoted=self.attachments
