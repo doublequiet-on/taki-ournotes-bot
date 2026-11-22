@@ -169,8 +169,18 @@ def left_logo(canvas, image, x, cy, width, height):
     return end
 
 
-@lru_cache(maxsize=48)
+MAX_CACHED_FRAME_BYTES = 512 * 1024
+
+
 def frame(width, height, rarity):
+    # Detail artwork heights vary with the source aspect ratio. Cache only
+    # small frames so a series of distinct details cannot pin large RGBA rasters.
+    if (width + 8) * (height + 8) * 4 > MAX_CACHED_FRAME_BYTES:
+        return _draw_frame(width, height, rarity)
+    return _cached_frame(width, height, rarity)
+
+
+def _draw_frame(width, height, rarity):
     colors = {2:['#567eaf','#d5eaff','#749ecc','#e0efff','#567eaf'],
               3:['#a87824','#fff1aa','#cfaa48','#fff5bf','#a87824'],
               4:['#ca81d2','#f1b8d6','#f3dc89','#91d9c4','#86b6ec','#bb94df'],
@@ -190,6 +200,9 @@ def frame(width, height, rarity):
     ImageDraw.Draw(mask).rounded_rectangle((0,0,width+7,height+7),10,fill=255)
     layer.putalpha(mask)
     return layer
+
+
+_cached_frame = lru_cache(maxsize=48)(_draw_frame)
 
 
 class Canvas:
