@@ -48,12 +48,15 @@ _EVENT_BANNER = re.compile(r"/assets/jp/Assets/AddressableResources/Image/Event/
 
 def persistent_snapshot(saved):
     """Keep the shared cache readable by versions predating event banner support."""
-    snapshot = deepcopy(saved)
-    for event in snapshot["documents"]["jp"].get("events", {}).values():
-        image = event.get("image")
-        if isinstance(image, str) and _EVENT_BANNER.fullmatch(image):
-            event["image"] = ""
-    return snapshot
+    documents = saved["documents"]
+    jp = documents["jp"]
+    events = jp.get("events", {})
+    banners = {key: {**event, "image": ""} for key, event in events.items()
+               if isinstance(event.get("image"), str) and _EVENT_BANNER.fullmatch(event["image"])}
+    if not banners:
+        return saved
+    # Callers serialize or compare this projection while holding the owner lock.
+    return {**saved, "documents": {**documents, "jp": {**jp, "events": {**events, **banners}}}}
 
 
 class CatalogRecords(tuple):
@@ -282,15 +285,18 @@ class CatalogRepository:
         return saved
 
     def _write(self, saved):
-        saved = persistent_snapshot(saved)
-        body = encoded({"snapshot": saved, "sha256": hashlib.sha256(encoded(saved)).hexdigest()})
-        if len(body) > MAX_BYTES:
+        body = encoded(persistent_snapshot(saved))
+        checksum = hashlib.sha256(body).hexdigest().encode("ascii")
+        prefix = b'{"sha256":"' + checksum + b'","snapshot":'
+        if len(prefix) + len(body) + 1 > MAX_BYTES:
             raise ValueError("Catalog cache size limit")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(self.path.name + "." + uuid.uuid4().hex + ".tmp")
         try:
             with temporary.open("xb") as stream:
+                stream.write(prefix)
                 stream.write(body)
+                stream.write(b"}")
             os.replace(temporary, self.path)
         finally:
             temporary.unlink(missing_ok=True)
