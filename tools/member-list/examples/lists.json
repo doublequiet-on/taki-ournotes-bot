@@ -1,0 +1,157 @@
+{
+  "release": "r-c7a12eb078c437aee966",
+  "cards": {
+    "64": {"id": 64, "color": 5, "rarity": "BD", "leader": 125, "score": 115, "gek": "+200%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-64.png"},
+    "71": {"id": 71, "color": 2, "rarity": "BD", "leader": 125, "score": 115, "gek": "+2", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-71.png"},
+    "75": {"id": 75, "color": 4, "rarity": "BD", "leader": 125, "score": 115, "gek": "+2", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-75.png"},
+    "51": {"id": 51, "color": 4, "rarity": "SSR", "leader": 150, "score": 140, "gek": "+4", "leaderIcon": "icon_skill_parameter_mygo_3.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-51.png"},
+    "52": {"id": 52, "color": 5, "rarity": "SSR", "leader": 150, "score": 130, "gek": "+300%", "leaderIcon": "icon_skill_parameter_mygo_3.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-52.png"},
+    "53": {"id": 53, "color": 3, "rarity": "SSR", "leader": 47, "score": 150, "gek": "+5", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-53.png"},
+    "54": {"id": 54, "color": 1, "rarity": "SSR", "leader": 141, "score": 130, "gek": "+300%", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-54.png"},
+    "55": {"id": 55, "color": 2, "rarity": "SSR", "leader": 141, "score": 140, "gek": "+4", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-55.png"},
+    "56": {"id": 56, "color": 1, "rarity": "SSR", "leader": 141, "score": 150, "gek": "+5", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-56.png"},
+    "57": {"id": 57, "color": 4, "rarity": "SSR", "leader": 47, "score": 140, "gek": "+4", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-57.png"},
+    "58": {"id": 58, "color": 5, "rarity": "SSR", "leader": 150, "score": 130, "gek": "+300%", "leaderIcon": "icon_skill_parameter_mujica_3.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-58.png"},
+    "59": {"id": 59, "color": 2, "rarity": "SSR", "leader": 141, "score": 130, "gek": "+3", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-59.png"},
+    "60": {"id": 60, "color": 3, "rarity": "SSR", "leader": 150, "score": 150, "gek": "+5", "leaderIcon": "icon_skill_parameter_mujica_3.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-60.png"},
+    "61": {"id": 61, "color": 2, "rarity": "SSR", "leader": 150, "score": 150, "gek": "+5", "leaderIcon": "icon_skill_parameter_blue_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-61.png"},
+    "62": {"id": 62, "color": 2, "rarity": "SSR", "leader": 150, "score": 130, "gek": "+3", "leaderIcon": "icon_skill_parameter_yumemita_3.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-62.png"},
+    "65": {"id": 65, "color": 1, "rarity": "SSR", "leader": 150, "score": 130, "gek": "+3", "leaderIcon": "icon_skill_parameter_red_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-65.png"},
+    "66": {"id": 66, "color": 1, "rarity": "SSR", "leader": 150, "score": 150, "gek": "+5", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-66.png"},
+    "68": {"id": 68, "color": 4, "rarity": "SSR", "leader": 150, "score": 140, "gek": "100%", "leaderIcon": "icon_skill_parameter_yellow_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-68.png"},
+    "69": {"id": 69, "color": 4, "rarity": "SSR", "leader": 150, "score": 130, "gek": "+300%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-69.png"},
+    "72": {"id": 72, "color": 4, "rarity": "SSR", "leader": 150, "score": 155, "gek": "+50pt", "leaderIcon": "icon_skill_parameter_mygo_3.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_point.png", "art": "card-72.png"},
+    "73": {"id": 73, "color": 3, "rarity": "SSR", "leader": 150, "score": 150, "gek": "+4", "leaderIcon": "icon_skill_parameter_mujica_3.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-73.png"},
+    "76": {"id": 76, "color": 5, "rarity": "SSR", "leader": 150, "score": 130, "gek": "+300%", "leaderIcon": "icon_skill_parameter_yellow_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-76.png"},
+    "77": {"id": 77, "color": 5, "rarity": "SSR", "leader": 150, "score": 140, "gek": "100%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-77.png"},
+    "79": {"id": 79, "color": 4, "rarity": "SSR", "leader": 150, "score": 130, "gek": "+3", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-79.png"},
+    "80": {"id": 80, "color": 4, "rarity": "SSR", "leader": 50, "score": 140, "gek": "+4", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-80.png"},
+    "26": {"id": 26, "color": 2, "rarity": "SR", "leader": 102, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-26.png"},
+    "27": {"id": 27, "color": 3, "rarity": "SR", "leader": 102, "score": 100, "gek": "+2", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-27.png"},
+    "28": {"id": 28, "color": 1, "rarity": "SR", "leader": 34, "score": 120, "gek": "+40pt", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_point.png", "art": "card-28.png"},
+    "29": {"id": 29, "color": 5, "rarity": "SR", "leader": 102, "score": 100, "gek": "+200%", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-29.png"},
+    "30": {"id": 30, "color": 4, "rarity": "SR", "leader": 102, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-30.png"},
+    "31": {"id": 31, "color": 3, "rarity": "SR", "leader": 102, "score": 120, "gek": "+4", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-31.png"},
+    "32": {"id": 32, "color": 2, "rarity": "SR", "leader": 34, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-32.png"},
+    "33": {"id": 33, "color": 4, "rarity": "SR", "leader": 102, "score": 100, "gek": "+2", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-33.png"},
+    "34": {"id": 34, "color": 1, "rarity": "SR", "leader": 102, "score": 100, "gek": "+2", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-34.png"},
+    "35": {"id": 35, "color": 5, "rarity": "SR", "leader": 102, "score": 120, "gek": "+40pt", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_point.png", "art": "card-35.png"},
+    "36": {"id": 36, "color": 3, "rarity": "SR", "leader": 34, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-36.png"},
+    "37": {"id": 37, "color": 5, "rarity": "SR", "leader": 102, "score": 100, "gek": "+200%", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-37.png"},
+    "38": {"id": 38, "color": 1, "rarity": "SR", "leader": 102, "score": 100, "gek": "+2", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-38.png"},
+    "39": {"id": 39, "color": 2, "rarity": "SR", "leader": 102, "score": 120, "gek": "+40pt", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_point.png", "art": "card-39.png"},
+    "40": {"id": 40, "color": 4, "rarity": "SR", "leader": 102, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-40.png"},
+    "41": {"id": 41, "color": 1, "rarity": "SR", "leader": 34, "score": 100, "gek": "+2", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-41.png"},
+    "42": {"id": 42, "color": 2, "rarity": "SR", "leader": 102, "score": 100, "gek": "+2", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-42.png"},
+    "43": {"id": 43, "color": 3, "rarity": "SR", "leader": 102, "score": 110, "gek": "100%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-43.png"},
+    "44": {"id": 44, "color": 5, "rarity": "SR", "leader": 102, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-44.png"},
+    "45": {"id": 45, "color": 4, "rarity": "SR", "leader": 102, "score": 120, "gek": "+40pt", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_point.png", "art": "card-45.png"},
+    "46": {"id": 46, "color": 3, "rarity": "SR", "leader": 34, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-46.png"},
+    "47": {"id": 47, "color": 1, "rarity": "SR", "leader": 102, "score": 120, "gek": "+4", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-47.png"},
+    "48": {"id": 48, "color": 4, "rarity": "SR", "leader": 102, "score": 100, "gek": "+200%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-48.png"},
+    "49": {"id": 49, "color": 2, "rarity": "SR", "leader": 102, "score": 100, "gek": "+200%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-49.png"},
+    "50": {"id": 50, "color": 5, "rarity": "SR", "leader": 102, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-50.png"},
+    "63": {"id": 63, "color": 2, "rarity": "SR", "leader": 102, "score": 120, "gek": "+4", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-63.png"},
+    "67": {"id": 67, "color": 1, "rarity": "SR", "leader": 102, "score": 100, "gek": "+2", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-67.png"},
+    "70": {"id": 70, "color": 4, "rarity": "SR", "leader": 102, "score": 100, "gek": "+200%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-70.png"},
+    "74": {"id": 74, "color": 2, "rarity": "SR", "leader": 102, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-74.png"},
+    "78": {"id": 78, "color": 5, "rarity": "SR", "leader": 102, "score": 100, "gek": "+200%", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-78.png"},
+    "81": {"id": 81, "color": 4, "rarity": "SR", "leader": 102, "score": 110, "gek": "+3", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-81.png"},
+    "1": {"id": 1, "color": 5, "rarity": "R", "leader": 72, "score": 70, "gek": "+100%", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-1.png"},
+    "2": {"id": 2, "color": 1, "rarity": "R", "leader": 72, "score": 70, "gek": "+100%", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-2.png"},
+    "3": {"id": 3, "color": 2, "rarity": "R", "leader": 24, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-3.png"},
+    "4": {"id": 4, "color": 4, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-4.png"},
+    "5": {"id": 5, "color": 3, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_mygo_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-5.png"},
+    "6": {"id": 6, "color": 5, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-6.png"},
+    "7": {"id": 7, "color": 3, "rarity": "R", "leader": 24, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-7.png"},
+    "8": {"id": 8, "color": 2, "rarity": "R", "leader": 72, "score": 70, "gek": "+100%", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-8.png"},
+    "9": {"id": 9, "color": 4, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-9.png"},
+    "10": {"id": 10, "color": 1, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_mujica_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-10.png"},
+    "11": {"id": 11, "color": 2, "rarity": "R", "leader": 24, "score": 70, "gek": "+100%", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-11.png"},
+    "12": {"id": 12, "color": 1, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-12.png"},
+    "13": {"id": 13, "color": 4, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-13.png"},
+    "14": {"id": 14, "color": 5, "rarity": "R", "leader": 72, "score": 70, "gek": "+100%", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-14.png"},
+    "15": {"id": 15, "color": 3, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter_yumemita_1.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-15.png"},
+    "16": {"id": 16, "color": 2, "rarity": "R", "leader": 24, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-16.png"},
+    "17": {"id": 17, "color": 4, "rarity": "R", "leader": 72, "score": 70, "gek": "+100%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-17.png"},
+    "18": {"id": 18, "color": 5, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-18.png"},
+    "19": {"id": 19, "color": 1, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-19.png"},
+    "20": {"id": 20, "color": 3, "rarity": "R", "leader": 72, "score": 70, "gek": "+100%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-20.png"},
+    "21": {"id": 21, "color": 5, "rarity": "R", "leader": 24, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-21.png"},
+    "22": {"id": 22, "color": 2, "rarity": "R", "leader": 72, "score": 70, "gek": "+100%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-22.png"},
+    "23": {"id": 23, "color": 3, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_combo.png", "art": "card-23.png"},
+    "24": {"id": 24, "color": 4, "rarity": "R", "leader": 72, "score": 70, "gek": "+100%", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_luck_gauge.png", "art": "card-24.png"},
+    "25": {"id": 25, "color": 1, "rarity": "R", "leader": 72, "score": 70, "gek": "+1", "leaderIcon": "icon_skill_parameter.png", "scoreIcon": "icon_skill_scoreup.png", "gekIcon": "icon_skill_just_count.png", "art": "card-25.png"}
+  },
+  "cases": {
+    "pair": {
+      "command": "椎名立希与三角初华",
+      "people": [
+        {"id": 5, "name": "椎名立希", "color": "#7777AA", "band": 1, "order": 4, "ids": [55, 72, 30, 5], "face": "face-5.png"},
+        {"id": 6, "name": "Doloris / 三角初华", "color": "#bb9955", "band": 2, "order": 3, "ids": [56, 73, 31, 78, 6], "face": "face-6.png"}
+      ]
+    },
+    "taki": {
+      "command": "/查卡 椎名立希",
+      "people": [
+        {"id": 5, "name": "椎名立希", "color": "#7777AA", "band": 1, "order": 4, "ids": [55, 72, 30, 5], "face": "face-5.png"}
+      ]
+    },
+    "blue": {
+      "command": "/查卡 MyGO!!!!! 蓝",
+      "people": [
+        {"id": 1, "name": "高松灯", "color": "#77BBDD", "band": 1, "order": 3, "ids": [26], "face": "face-1.png"},
+        {"id": 5, "name": "椎名立希", "color": "#7777AA", "band": 1, "order": 4, "ids": [55], "face": "face-5.png"},
+        {"id": 3, "name": "要乐奈", "color": "#77DD77", "band": 1, "order": 5, "ids": [74, 3], "face": "face-3.png"}
+      ]
+    },
+    "birthday": {
+      "command": "/查卡 黄 BD",
+      "people": [
+        {"id": 15, "name": "千石由乃", "color": "#EE5577", "band": 3, "order": 2, "ids": [75], "face": "face-15.png"}
+      ]
+    },
+    "yellow-ssr": {
+      "command": "/查卡 黄 SSR",
+      "people": [
+        {"id": 1, "name": "高松灯", "color": "#77BBDD", "band": 1, "order": 3, "ids": [51], "face": "face-1.png"},
+        {"id": 5, "name": "椎名立希", "color": "#7777AA", "band": 1, "order": 4, "ids": [72], "face": "face-5.png"},
+        {"id": 7, "name": "Mortis / 若叶睦", "color": "#779977", "band": 2, "order": 5, "ids": [57], "face": "face-7.png"},
+        {"id": 11, "name": "仲町阿拉蕾", "color": "#FFEE55", "band": 3, "order": 3, "ids": [80], "face": "face-11.png"},
+        {"id": 14, "name": "藤都子", "color": "#9977CC", "band": 3, "order": 4, "ids": [79], "face": "face-14.png"},
+        {"id": 21, "name": "须贺蕾叶", "color": "#FF7700", "band": 5, "order": 3, "ids": [69], "face": "face-21.png"},
+        {"id": 25, "name": "四宫宁月", "color": "#9999FF", "band": 5, "order": 4, "ids": [68], "face": "face-25.png"}
+      ]
+    },
+    "all": {
+      "command": "/查卡",
+      "people": [
+        {"id": 2, "name": "千早爱音", "color": "#FF8899", "band": 1, "order": 1, "ids": [52, 27, 2], "face": "face-2.png"},
+        {"id": 4, "name": "长崎爽世", "color": "#FFDD88", "band": 1, "order": 2, "ids": [54, 29, 4], "face": "face-4.png"},
+        {"id": 1, "name": "高松灯", "color": "#77BBDD", "band": 1, "order": 3, "ids": [51, 26, 1], "face": "face-1.png"},
+        {"id": 5, "name": "椎名立希", "color": "#7777AA", "band": 1, "order": 4, "ids": [55, 72, 30, 5], "face": "face-5.png"},
+        {"id": 3, "name": "要乐奈", "color": "#77DD77", "band": 1, "order": 5, "ids": [53, 28, 74, 3], "face": "face-3.png"},
+        {"id": 10, "name": "Oblivionis / 丰川祥子", "color": "#7799cc", "band": 2, "order": 1, "ids": [60, 35, 10], "face": "face-10.png"},
+        {"id": 8, "name": "Timoris / 八幡海铃", "color": "#335566", "band": 2, "order": 2, "ids": [58, 33, 8], "face": "face-8.png"},
+        {"id": 6, "name": "Doloris / 三角初华", "color": "#bb9955", "band": 2, "order": 3, "ids": [56, 73, 31, 78, 6], "face": "face-6.png"},
+        {"id": 9, "name": "Amoris / 祐天寺若麦", "color": "#aa4477", "band": 2, "order": 4, "ids": [59, 77, 34, 9], "face": "face-9.png"},
+        {"id": 7, "name": "Mortis / 若叶睦", "color": "#779977", "band": 2, "order": 5, "ids": [57, 76, 32, 7], "face": "face-7.png"},
+        {"id": 13, "name": "峰月律", "color": "#4477CC", "band": 3, "order": 1, "ids": [38, 63, 13], "face": "face-13.png"},
+        {"id": 15, "name": "千石由乃", "color": "#EE5577", "band": 3, "order": 2, "ids": [61, 75, 40, 15], "face": "face-15.png"},
+        {"id": 11, "name": "仲町阿拉蕾", "color": "#FFEE55", "band": 3, "order": 3, "ids": [80, 36, 11], "face": "face-11.png"},
+        {"id": 14, "name": "藤都子", "color": "#9977CC", "band": 3, "order": 4, "ids": [79, 39, 14], "face": "face-14.png"},
+        {"id": 12, "name": "宫永野乃花", "color": "#FFBBCC", "band": 3, "order": 5, "ids": [62, 81, 37, 12], "face": "face-12.png"},
+        {"id": 18, "name": "琴平凪", "color": "#5555FF", "band": 4, "order": 1, "ids": [65, 43, 18], "face": "face-18.png"},
+        {"id": 19, "name": "滨崎茉幌", "color": "#77FFFF", "band": 4, "order": 2, "ids": [44, 19], "face": "face-19.png"},
+        {"id": 16, "name": "汐见萤", "color": "#99FF99", "band": 4, "order": 3, "ids": [41, 16], "face": "face-16.png"},
+        {"id": 20, "name": "和泉朋花", "color": "#EE99EE", "band": 4, "order": 4, "ids": [71, 67, 45, 20], "face": "face-20.png"},
+        {"id": 17, "name": "伊泽枣", "color": "#FF4444", "band": 4, "order": 5, "ids": [66, 42, 17], "face": "face-17.png"},
+        {"id": 23, "name": "矢仓蓬咲", "color": "#448888", "band": 5, "order": 1, "ids": [48, 23], "face": "face-23.png"},
+        {"id": 24, "name": "梅里千樱梨", "color": "#FF55AA", "band": 5, "order": 2, "ids": [49, 24], "face": "face-24.png"},
+        {"id": 21, "name": "须贺蕾叶", "color": "#FF7700", "band": 5, "order": 3, "ids": [69, 46, 21], "face": "face-21.png"},
+        {"id": 25, "name": "四宫宁月", "color": "#9999FF", "band": 5, "order": 4, "ids": [68, 50, 25], "face": "face-25.png"},
+        {"id": 22, "name": "马桥心玖", "color": "#22CCFF", "band": 5, "order": 5, "ids": [64, 47, 70, 22], "face": "face-22.png"}
+      ]
+    }
+  }
+}
