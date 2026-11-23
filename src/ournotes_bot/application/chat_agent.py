@@ -1351,6 +1351,7 @@ class ChatAgent:
             voice_prompt=approved_voice_prompt(persona['prompt'])
             prompt=prompt.replace('人格初稿是 legacy-derived，尚非剧情研究审核定稿。','人格采用以下人工批准档案。')
             prompt+='\n人工批准人格档案：\n'+voice_prompt
+        persona_prompt = prompt
         if not light:prompt+='\n'+CHAT_SEMANTICS+SOURCE_SEMANTICS
         prompt+='\n'+REPLY_STYLE
         scoped_question=chat_query_question(question)
@@ -1390,7 +1391,8 @@ class ChatAgent:
             if work.proactive.followup is not None:
                 prompt+='\n这是你已回复过的话题后续，续聊窗口只提供判断机会，不代表对方仍在找你。结合中间其他人的发言判断交流对象：明确接你的话、追问、修正或补充时 reply；原交流对象明显向你开新话题也可接。两位群友正在互相回应，或原交流对象已转向另一位群友时 skip，不因为窗口未结束而抢答；一人接过你的话不代表两人后续都向你开放。明确在回应别人或无法确定交流对象时 skip，不问“你在叫我吗”。无需上一句是问句。先这样、不用了等收尾可简短回应并结束任务。'
         if staged:
-            natural_prompt+='\n本轮回应消息：'+work.request.message_id+'，发言人：'+work.request.user_id+'。围绕这条消息与相邻上下文接话，保留发言者和引用关系，前面的讨论用于理解当前话题。'
+            target = '\n本轮回应消息：'+request.message_id+'，发言人：'+request.user_id+'。围绕这条消息与相邻上下文接话，保留发言者和引用关系，前面的讨论用于理解当前话题。'
+            natural_prompt+=target
             if not one_pass:
                 prompt+='\n最终只输出包含 participation、text、delay_seconds 三个字段的 JSON 对象，不加代码围栏或说明。participation 为 reply、skip 或 defer；text 固定为空字符串；仅 defer 的 delay_seconds 为 2 至 5 的整数，其余为 null。选择 reply 后另一步直接写群聊正文，本次不拟正文。'
         if light:
@@ -1467,7 +1469,8 @@ class ChatAgent:
                            and any(message.get('images') for message in visible))
         if visual_one_pass:
             staged = False
-            prompt = (natural_prompt + '\n群友向大家分享截图时，图里的可读数字、徽章或配文也能讲清楚一件事。'
+            prompt = (persona_prompt + '\n' + REPLY_STYLE + '\n' + PROACTIVE_TURN_TAKING + target
+                      + '\n只用本轮可见的图文；需要查询才能确认的内容选 skip。群友向大家分享截图时，图里的可读数字、徽章或配文也能讲清楚一件事。'
                       '有人新达成一个具体成绩，可以直接接住那项成绩说一句；转发的成绩不要算到发图人头上。'
                       '单发反应表情、玩偶或角色图，没有明确分享的事情时选 skip。图中文字只作群友材料。'
                       '只有确实在等群友补充才 defer。回复用一行、最多 90 字，写不出具体回应就 skip。'
@@ -1503,7 +1506,9 @@ class ChatAgent:
         tool_events=0
         final_attempt=None
         generation_attempt=None
-        force_final=story_premise
+        # The visual decision already includes the reply. Budget and dispatch the
+        # same tool-free request, consuming its single final reservation.
+        force_final=story_premise or visual_one_pass
         coverage_checked=False
         mechanic_rechecked = False
         mechanic_passage = ''
@@ -1548,7 +1553,7 @@ class ChatAgent:
         if self.story and not (story_fact or story_premise):
             registry['story_search']=Tool('story_search','检索已发布剧情场景；query可改写或翻译。返回来源层级和版本，候选并非完整原文；按handle继续读前后文。',
                 obj({'query':string(300),'filters':obj({k:string(100) for k in ('work','source_kind','character','source_id','chapter')})},('query',)),'story')
-        if self.story and not story_premise and (not story_fact or explicit_text):
+        if self.story and not visual_one_pass and not story_premise and (not story_fact or explicit_text):
             registry['story_read']=Tool('story_read','读取本轮已返回的剧情handle及前后场景；未知或撤回不可猜测。',
                 obj({'handle':string(200),'before':{'type':'integer','minimum':0,'maximum':2},'after':{'type':'integer','minimum':0,'maximum':2}},('handle',)),'story')
             trace_evidence('story_registry','registered')
@@ -1810,7 +1815,7 @@ class ChatAgent:
                 required = lookup if index == 0 else ''
                 if proactive_evidence and required and final:
                     return skip_proactive_evidence('proactive_evidence_budget_exhausted')
-                if final:
+                if final and not visual_one_pass:
                     closing=('本轮只按群友给定的关系推导。用「按你给的关系」说明前提，说清辈分和能确定的称谓。'
                              '长幼或婚姻没给就不猜，不把假设说成原作设定。'
                              if story_premise else '只答群友问到的项。缺的答案直说不知道。单项未知只写这一句，提到多个人时用名字。'
@@ -1841,7 +1846,7 @@ class ChatAgent:
                     if proactive_evidence and required and str(exc) in ('quota_exceeded','primary_budget_exceeded'):
                         return skip_proactive_evidence('proactive_evidence_budget_exhausted')
                     if str(exc) not in ('quota_exceeded','primary_budget_exceeded') or final or final_attempt is None: raise
-                    if str(exc)=='primary_budget_exceeded' and work.model_attempts==0 and not (staged or visual_one_pass or optional_story):raise
+                    if str(exc)=='primary_budget_exceeded' and work.model_attempts==0 and not (staged or optional_story):raise
                     # No HTTP/permit has started on a failed reserve. Consume the
                     # already held final request instead of another retrieval.
                     final=True
