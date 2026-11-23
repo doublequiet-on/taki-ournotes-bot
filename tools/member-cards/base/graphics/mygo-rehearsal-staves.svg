@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 38" preserveAspectRatio="none" fill="none">
+  <title>壱雫空 · 降 G 大调 · 4/4</title>
+  <desc>按 muta-sax 的 C 调乐器实音谱首页，从上到下接读弱起和随后两个完整小节。https://www.mymusic5.com/ja/video/369930</desc>
+  <style>.phrase { display:none } .phrase:target { display:inline }</style>
+  <defs>
+    <g id="treble" stroke="#375767" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 27.8c-4-2-2.6-7.1 1.2-7.8 5.9-1.1 8 6.7 2.7 9.1-5.5 2.5-10.8-1.1-10.2-5.9.5-4.7 5.7-7.4 8.2-11.2 2-3.1 1.8-6 .5-6.9-2.3 1.2-3.2 4.8-2.8 8.7l3.7 18.6c.7 3.9-4.5 4.6-5.5 1.8" stroke-width="1.25"/>
+      <path d="M6.4 25.2c-1.2-4.6 3.8-8.3 6.3-11.3 2.1-2.5 2.9-5.7 2-8.2" stroke-width=".75"/>
+      <ellipse cx="10.7" cy="33.8" rx="1.5" ry="1.4" fill="#375767" stroke="none"/>
+    </g>
+    <path id="flat" d="M.1-6.5 .1 1.6c1.2-.9 3.5-2.2 3.4-3.8-.2-2.1-2.6-1.4-3.4.7" stroke="#405d6b" stroke-width=".93" stroke-linecap="round" stroke-linejoin="round"/>
+    <path id="four" d="m3.9-3.1-3.5 4.5h5.2m-1.8-3.9-.1 5.8m-1.3 0h2.8" stroke="#3d5969" stroke-width="1.18" stroke-linecap="round" stroke-linejoin="round"/>
+    <ellipse id="head" rx="2.55" ry="1.7" transform="rotate(-19)" fill="#476575"/>
+    <path id="ledger" d="M-4.4 0h8.8" stroke="#557482" stroke-width=".74"/>
+    <path id="rest" d="m-1.55-5.4 3.7 3.6-2.5 3.3 2.2 2.3c-3.5-1.3-4.4.8-1.7 3.8-3.1-2-4.1-5.7-.8-5.9L-2.5-.5l2.8-2.9Z" fill="#476575"/>
+  </defs>
+  <g stroke="#829ba3" stroke-width=".68" opacity=".8">
+    <path d="M2.3 16Q74 15.8 145 16T278.5 15.9M2.3 19.4Q97 19.2 167 19.4T278.5 19.3M2.3 22.8Q86 22.65 157 22.8T278.5 22.7M2.3 26.2Q74 26.05 153 26.2T278.5 26.1M2.3 29.6Q87 29.45 155 29.6T278.5 29.5"/>
+  </g>
+  <path d="M2.3 16v13.6m276.2-13.7v13.7" stroke="#78919a" stroke-width=".92"/>
+  <use href="#treble"/>
+  <g id="key-signature" aria-label="降 B、E、A、D、G、C">
+    <use href="#flat" x="22" y="22.8"/><use href="#flat" x="27" y="17.7"/>
+    <use href="#flat" x="32" y="24.5"/><use href="#flat" x="37" y="19.4"/>
+    <use href="#flat" x="42" y="26.2"/><use href="#flat" x="47" y="21.1"/>
+  </g>
+  <g id="leader" class="phrase">
+    <g aria-label="4/4"><use href="#four" x="58" y="19.4"/><use href="#four" x="58" y="26.2"/></g>
+    <g data-note="Gb5" data-eighths="1">
+      <use href="#head" x="91" y="14.3"/><path d="M88.84 14.9V26.4" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Gb5" data-eighths="1">
+      <use href="#head" x="133" y="14.3"/><path d="M130.84 14.9V26.2" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Ab5" data-eighths="1">
+      <use href="#ledger" x="176" y="12.6"/>
+      <use href="#head" x="176" y="12.6"/><path d="M173.84 13.2V26" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Ab5" data-eighths="1">
+      <use href="#ledger" x="218" y="12.6"/>
+      <use href="#head" x="218" y="12.6"/><path d="M215.84 13.2V25.8" stroke="#476575" stroke-width="1"/>
+    </g>
+    <path d="M88.34 24.6 216.34 24V25.8L88.34 26.4Z" fill="#476575"/>
+  </g>
+  <g id="live" class="phrase">
+    <g data-note="Bb5" data-eighths="2">
+      <use href="#ledger" x="66" y="12.6"/>
+      <use href="#head" x="66" y="10.9"/><path d="M63.84 11.5V23.4" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Bb5" data-eighths="1">
+      <use href="#ledger" x="112" y="12.6"/>
+      <use href="#head" x="112" y="10.9"/><path d="M109.84 11.5V23.4" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Bb5" data-eighths="1">
+      <use href="#ledger" x="141" y="12.6"/>
+      <use href="#head" x="141" y="10.9"/><path d="M138.84 11.5V23.4" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Bb5" data-eighths="2">
+      <use href="#ledger" x="178" y="12.6"/>
+      <use href="#head" x="178" y="10.9"/><path d="M175.84 11.5V23.4" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Cb6" data-eighths="2">
+      <use href="#ledger" x="231" y="12.6"/>
+      <use href="#ledger" x="231" y="9.2"/>
+      <use href="#head" x="231" y="9.2"/><path d="M228.84 9.8V22.2" stroke="#476575" stroke-width="1"/>
+    </g>
+    <path d="M109.34 21.6 139.34 21.6V23.4L109.34 23.4Z" fill="#476575"/>
+    <path d="M142 8.5Q159.5 -.4 177 8.5Q159.5 2.4 142 8.5Z" fill="#476575"/>
+  </g>
+  <g id="rush" class="phrase">
+    <g data-note="Bb5" data-eighths="2">
+      <use href="#ledger" x="66" y="12.6"/>
+      <use href="#head" x="66" y="10.9"/><path d="M63.84 11.5V23.4" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Ab5" data-eighths="1">
+      <use href="#ledger" x="107" y="12.6"/>
+      <use href="#head" x="107" y="12.6"/><path d="M104.84 13.2V25.2" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Gb5" data-eighths="1">
+      <use href="#head" x="137" y="14.3"/><path d="M134.84 14.9V26.2" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="rest" data-eighths="2">
+      <use href="#rest" x="177" y="22.8"/>
+    </g>
+    <g data-note="Gb5" data-eighths="1">
+      <use href="#head" x="211" y="14.3"/><path d="M208.84 14.9V26.2" stroke="#476575" stroke-width="1"/>
+    </g>
+    <g data-note="Ab5" data-eighths="1">
+      <use href="#ledger" x="245" y="12.6"/>
+      <use href="#head" x="245" y="12.6"/><path d="M242.84 13.2V25.2" stroke="#476575" stroke-width="1"/>
+    </g>
+    <path d="M104.34 23.4 135.34 24.4V26.2L104.34 25.2Z" fill="#476575"/>
+    <path d="M208.34 24.4 243.34 23.4V25.2L208.34 26.2Z" fill="#476575"/>
+  </g>
+</svg>

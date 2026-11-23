@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="stat-sticker" viewBox="0 0 120 41" role="img" aria-label="属性值">
+  <defs>
+    <linearGradient id="stat-ink-a" x1=".2" y1="0" x2=".56" y2="1">
+      <stop stop-color="#ee435e"/><stop offset=".57" stop-color="#f85268"/>
+      <stop offset=".68" stop-color="#ee637b"/><stop offset=".77" stop-color="#9366a9"/>
+      <stop offset=".86" stop-color="#2672c8"/><stop offset="1" stop-color="#1264bb"/>
+    </linearGradient>
+    <linearGradient id="stat-ink-b" x1=".4" y1="0" x2=".2" y2="1">
+      <stop stop-color="#f44d64"/><stop offset=".60" stop-color="#f95e70"/>
+      <stop offset=".69" stop-color="#eb637f"/><stop offset=".80" stop-color="#875fa4"/>
+      <stop offset=".89" stop-color="#277bd1"/><stop offset="1" stop-color="#1163b3"/>
+    </linearGradient>
+    <linearGradient id="stat-ink-c" x1=".28" y1="0" x2=".63" y2="1">
+      <stop stop-color="#ee4563"/><stop offset=".53" stop-color="#fb6270"/>
+      <stop offset=".65" stop-color="#ed6982"/><stop offset=".73" stop-color="#9a64a3"/>
+      <stop offset=".84" stop-color="#347cd1"/><stop offset="1" stop-color="#1265bc"/>
+    </linearGradient>
+  </defs>
+  <path d="M3.5 7Q3.6 4.6 6.7 4.5L34.5 3.2Q37 3.1 39 4.7L46 4.4 49 2.9 75.3 2.7 80 4.3 106 3Q109 2.7 110 5.8L110.8 9.1 115.1 9.7Q117.1 10.4 116.8 13.8L116 20.6 112 24 112.7 32.8Q112.9 35.7 109.3 36L84.8 37.2 79.7 35.8 72 37.6 43 37 38 35.6 33.6 37.2 7 37.1Q4.3 37 4.3 34.8L2.6 29.8Z"
+        fill="#fffaf0" stroke="#ede1cf" stroke-width=".9"/>
+  <g text-anchor="middle" font-family="ZCOOL KuaiLe,LXGW WenKai,sans-serif" font-size="32" font-weight="400">
+    <text x="22" y="31.8" transform="rotate(-2 22 21)" fill="url(#stat-ink-a)">属</text>
+    <text x="56.5" y="32.3" transform="rotate(1.5 56.5 21)" fill="url(#stat-ink-b)">性</text>
+    <text x="91" y="31.5" transform="rotate(-1 91 21)" fill="url(#stat-ink-c)">值</text>
+  </g>
+  <path d="m109.4 14.2 4.5-1.5" stroke="#eeb839" stroke-width="1.7" stroke-linecap="round"/>
+  <circle cx="112" cy="18.6" r="1.1" fill="#3587cc"/>
+</svg>

@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 238">
+<defs>
+  <linearGradient id="wood" x2=".85" y2=".45"><stop stop-color="#5e4544"/><stop offset=".26" stop-color="#d1ac90"/><stop offset=".53" stop-color="#f0d6ae"/><stop offset=".87" stop-color="#ab826e"/><stop offset="1" stop-color="#664e50"/></linearGradient>
+  <linearGradient id="silk" x2=".95" y2=".22"><stop stop-color="#372735"/><stop offset=".32" stop-color="#742e49"/><stop offset=".5" stop-color="#aa526a"/><stop offset=".76" stop-color="#693145"/><stop offset="1" stop-color="#382635"/></linearGradient>
+  <linearGradient id="bone" x2="1" y2=".6"><stop stop-color="#fcf3d9"/><stop offset=".68" stop-color="#dcc7b4"/><stop offset="1" stop-color="#a08e91"/></linearGradient>
+  <pattern id="etch" width="2.8" height="2.8" patternUnits="userSpaceOnUse" patternTransform="rotate(23)"><path d="M0 0v3" stroke="#45293c" stroke-width=".66"/></pattern>
+</defs>
+<!-- An unlettered rehearsal marionette; the score is set in live type alongside it. -->
+<g fill="none" stroke-linecap="round">
+ <path d="M71 18Q75 51 67 81M58 24Q59 55 55 105" stroke="#8d8181" stroke-width=".8"/>
+ <path d="M19 33L24 93" stroke="#a98053" stroke-width="1.2"/>
+ <path d="M132 19L116 108" stroke="#8c3d59" stroke-width="1.3"/>
+ <path d="M71 20Q87 103 99 157" stroke="#a89594" stroke-width=".6"/>
+</g>
+<!-- Slotted wooden control, viewed from just below. -->
+<g stroke="#59474b" stroke-linejoin="round" stroke-width="1.1">
+ <path d="M52 3l6 -2 31 37 -5 4 -7 -4Z" fill="url(#wood)"/>
+ <path d="M9 28L136 12l4 4 -4 6 -124 16 -6 -5Z" fill="#483640"/>
+ <path d="M9 28L136 12l4 4L11 33 6 33Z" fill="url(#wood)"/>
+ <path d="M15 30l32 -4m36 -5 33 -4" stroke="#e0c5a8" stroke-width=".8"/>
+ <circle cx="70" cy="25" r="3.5" fill="#8c7670"/><path d="m68 26 4 -2" stroke="#44343c"/>
+ <ellipse cx="19" cy="33" rx="2.6" ry="2" fill="#dbc3a4"/><ellipse cx="132" cy="19" rx="2.6" ry="2" fill="#dbc3a4"/>
+</g>
+<!-- Jointed wooden limbs; the patella and elbow pins stay visible through the costume. -->
+<g stroke="#614b51" stroke-linejoin="round" stroke-width="1">
+ <path d="M71 160q7 16 22 22l5 -5q-13 -15 -16 -26Z" fill="url(#wood)"/>
+ <circle cx="96" cy="180" r="4.6" fill="#a98a7c"/><circle cx="96" cy="180" r="1.45" fill="#59434c"/>
+ <path d="M96 183q-9 10 -18 19l4 3q14 -8 19 -20l-1 -3Z" fill="url(#wood)"/>
+ <path d="M80 201l4 2q-6 11 -16 11q-3 0 -2 -2l10 -8Z" fill="#45303c"/>
+ <path d="M59 151q-2 19 -4 35l7 2q7 -17 10 -32Z" fill="url(#wood)"/>
+ <circle cx="58" cy="190" r="5" fill="#c7a487"/><circle cx="58" cy="190" r="1.6" fill="#634951"/>
+ <path d="M54 194q2 14 7 29l5 -1q0 -17 -4 -28Z" fill="url(#wood)"/>
+ <path d="M61 221l5 -2q1 6 6 10q3 3 0 4q-5 1 -10 -4l-4 -3Z" fill="#493440"/>
+ <!-- bent left arm and raised wrist -->
+ <path d="M58 109q-5 12 -19 17l-5 -4q9 -12 16 -19Z" fill="url(#silk)"/>
+ <circle cx="36.5" cy="124" r="4.1" fill="url(#wood)"/><circle cx="36.5" cy="124" r="1.2" fill="#5e4851"/>
+ <path d="M33.2 122q-6 -11 -7 -23l4 -1q8 10 10 23l-3 3Z" fill="url(#wood)"/>
+ <path d="M25 100l-3 -6 -4 -2 -4 -6 1.8 -.9 4.8 4.6 -3.2 -8.4 1.8 -.4 5.2 8.3 -.3 -7.3 1.7 -.2 2.3 10 2.4 5.6Z" fill="url(#bone)"/>
+ <!-- right arm in arabesque -->
+ <path d="M76 106q10 6 19 18l-5 5q-15 -8 -23 -16Z" fill="url(#silk)"/>
+ <circle cx="94" cy="127" r="3.9" fill="url(#wood)"/><circle cx="94" cy="127" r="1.25" fill="#5e4851"/>
+ <path d="M96 125q8 -11 18 -16l3 3q-6 10 -19 17Z" fill="url(#wood)"/>
+ <path d="M112 111l3 -6 1 -7 2 .2 .6 5.1 5.5 -9 1.5 1 -3.2 8 5 -4.3 1.3 1.2 -6.5 8 -6.3 4.7Z" fill="url(#bone)"/>
+ <!-- bodice, waist seam and pleated petals -->
+ <path d="M53 102Q66 99 77 103L81 117Q73 123 71 135l-13 2q-3 -9 -9 -17Z" fill="url(#silk)"/>
+ <path d="m59 105 6 19 8 -19 -6 23Z" fill="#d6bfaa"/><path d="m58 135 15 -3 2 4 -17 4Z" fill="#44313c"/>
+ <path d="M58 137q-7 9 -24 18q7 1 9 5l-2 4q8 -1 13 4q7 -4 16 1l5 -4 10 1 1 -5 13 -2q-17 -14 -25 -24Z" fill="url(#silk)"/>
+ <path d="M58 140q-6 10 -15 18m19 -17 -9 24m13 -26 3 26m1 -27 12 23m-8 -23 17 18" fill="none" stroke="#c38c91" stroke-width=".8"/>
+ <path d="M68 138l3 23 5 -3 5 1 -10 -21Z" fill="url(#etch)"/>
+ <!-- porcelain face tipped towards the lifted hand -->
+ <g transform="rotate(-16 62 88)">
+  <path d="M56 92l1 10 8 2 2 -14Z" fill="url(#wood)"/>
+  <path d="M50 76q0 -12 12 -15q14 1 15 14l-3 12 -7 8 -9 2 -6 -4 -3 -7 -4 -2 4 -5Z" fill="url(#bone)"/>
+  <path d="M50 79q2 -8 10 -9q9 5 13 1q5 7 0 17q8 -5 8 -15 -3 -12 -12 -13q-12 -6 -19 5l-4 -2 2 6 -4 2 3 1 -1 5Z" fill="#3e303c"/>
+  <path d="M51 81q5 -4 11 -1l-3 4 -4 1Z" fill="#4b3443"/><path d="M52 80q4 -3 9 -1" fill="none" stroke="#b6a49c" stroke-width=".9"/>
+  <path d="m51 87 3 .4m0 4 5 .2" stroke="#845967" fill="none" stroke-width=".8"/>
+  <circle cx="72" cy="85" r="1.8" fill="#a18979"/>
+ </g>
+ <path d="m47 100 7 1 3 -4 5 3 6 -3 4 3 8 -1 -3 6 -5 -1 -4 3 -5 -2 -5 3 -4 -3 -5 1Z" fill="url(#bone)"/>
+</g></svg>

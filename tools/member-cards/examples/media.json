@@ -1,0 +1,506 @@
+{
+  "release": "r-446fa5ab7a4d6ee030a2",
+  "images": {
+    "icon_skill_parameter_mygo_1.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter_mygo_1.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "01cd33892166e7793311e63fac500f34ec020bfc1ef1cafaf9e7fe2ce88ab999",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "icon_skill_scoreup.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_scoreup.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "cdef61df24145a5802a1985a278925ef778438dd2ff542bcc5cc2509c5060535",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "icon_skill_just_count.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_just_count.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "7e12e7350594997762a2f01e6801da0f04be8a2681e82f182b370537feb1664e",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "portrait-4.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/4/member_full.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "4aa330e577abc8056d5654db96999f933706150425fbbae1ac65c2291d2ee892",
+      "size": [
+        1440,
+        1920
+      ]
+    },
+    "wordmark-1.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Band/1/band_logo.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "ed36235fc0a772b89cb42eed1f0b4b941091670cc52ba003f9e317509e31344a",
+      "size": [
+        248,
+        120
+      ],
+      "trim": true
+    },
+    "band_Icon_mygo.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/band_Icon_mygo--Sprite-1764532156773599763.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "5da697ae44f064f40e31fb4f73cbc6ae3e0274d7453b8cf7e1a23df55e5375b9",
+      "size": [
+        58,
+        58
+      ]
+    },
+    "attr-Yellow.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardType-Yellow--Sprite-8030429192627967482.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "95be8361b2d79e470c0830146abe06f23bb74383d0106b85a3802be20d76b041",
+      "size": [
+        64,
+        64
+      ]
+    },
+    "RarityIconCenter_R.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_R--Sprite--4984197320711555452.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "a35029524ffdab4fd5d3edc6ebfa625d71888ecf54d4c4f732234d5de57462f1",
+      "size": [
+        85,
+        93
+      ]
+    },
+    "icon_skill_parameter_mygo_3.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter_mygo_3.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "d94384eacf8f297abde52e305a6dcff09264e5724992fe9bf939a2ae7e80af1c",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "icon_skill_luck_point.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_luck_point.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "e29bb2d38fec7fe410d3576385f70fea55aa6cb0903b4ba95172ea5aa78de9f5",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "portrait-72.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/72/member_full.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "1bee0ae60a181a80ce96bfb238e58b8e4c4059990a22120f49855d427145b6a4",
+      "size": [
+        1440,
+        1920
+      ]
+    },
+    "RarityIconCenter_SSR.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_SSR--Sprite--4859392036282087881.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "ec665bdcacd916a5a91ba895f941f4567c154aa70cd49e706eb491f4a1bc672f",
+      "size": [
+        142,
+        100
+      ]
+    },
+    "event-4.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Image/Event/04/Banner/event_banner_00004.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "aa171f42edf7950641c59b140d0a84f2fc95223994ccbf73cb60a28dcec4300b",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "attr-Blue.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardType-Blue--Sprite--8570591563865925409.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "285f9c9cf951ee638660cad2fd141df8198fdba569a8d1c851665c1721832e42",
+      "size": [
+        64,
+        64
+      ]
+    },
+    "attr-Green.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardType-Green--Sprite-7329247002294972433.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "a766d37a0e615800fb3369805ad83a431eeccf2c72feb2c9abf34c4900c8eaf0",
+      "size": [
+        64,
+        64
+      ]
+    },
+    "band-2-emblem.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Band/2/band_small_Icon.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "b38b209e547fa5359a6f2808b555bd683295b3cd449e70227502bc63fcc50fa9",
+      "size": [
+        62,
+        62
+      ]
+    },
+    "gacha-16.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Gacha/Banner/gacha_banner_00016.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "eac0c688a66bdf0a97f92bef0fc8b563516a6833276569778b02ae1bdc58ea70",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "gacha-17.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Gacha/Banner/gacha_banner_00017.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "946b31b31029f10c341087adb620504bc7a004e6b9363920e209a42f05cf09e3",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "gacha-18.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Gacha/Banner/gacha_banner_00018.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "c39391574dbaee750cde4d154c8ceb6fb1c60df849aea83b3580d11180280576",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "icon_skill_combo.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_combo.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "12a0bc34c68ff96bf76649a2c29e142c5af1880302432b8bc5e23aa1db95aca9",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "portrait-74.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/74/member_full.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "ec57ab05d478f6df55ed9e4595caf049276fe56442a0886fabf3fa3266562ccf",
+      "size": [
+        1440,
+        1920
+      ]
+    },
+    "RarityIconCenter_SR.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_SR--Sprite-8699131816429684678.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "f4f6fba389364a819cab926966f8c92e9fd4252c37d9d767c6de23a8dd79d3c5",
+      "size": [
+        117,
+        100
+      ]
+    },
+    "icon_skill_parameter_blue_1.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter_blue_1.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "11f4d1dba964162e13b860c6c7ccf915ee45153ab2e796b7a8288b258c4a6f70",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "portrait-61.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/61/member_full.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "969e3aac273011aa2649afa05d6003b4490e1d9f84a59068d7f760d3685d4f56",
+      "size": [
+        1440,
+        1920
+      ]
+    },
+    "wordmark-3.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Band/3/band_logo.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "f8b6d370d871f23d0f054063d892c5731c04ae8343bb2e58e8abc6eb1066d58c",
+      "size": [
+        235,
+        96
+      ],
+      "trim": true
+    },
+    "band-3-emblem.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Band/3/band_small_Icon.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "347ccc779ff8b5957999681be4a05002538b5b329765f8632222302c8c5f1763",
+      "size": [
+        62,
+        62
+      ]
+    },
+    "event-1.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Story/Banner/Chapter/ui_banner_chapter_6.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "7a2718d9fc175fc5b85fc38a552a46acfee277cb9a93632f8022745b48dfc8c7",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "gacha-10.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Gacha/Banner/gacha_banner_00010.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "31640489cb7393efea93e4455e16c730c149047729ac601b72eafd9cb468680f",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "icon_skill_parameter.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "0b0379db93374728f453653f3b0b2c39a40d35403a1bae803a11b94a88e66ea9",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "portrait-80.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/80/member_full.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "9d260abbf6dcdbcc0f3b8099e8a3ea61b12bba2e4c9edfe38be671f6f8d197f1",
+      "size": [
+        1440,
+        1920
+      ]
+    },
+    "event-6.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Story/Banner/Chapter/ui_banner_chapter_10.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "6583221baf2ce40e38bc9eff93b4f0d8f5a8ed492e80cdd411c3c184a67d0f6a",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "gacha-24.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Gacha/Banner/gacha_banner_00024.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "25435adc46fa1f2403a1c8443c0cdc387f433e5936ab0358c60043b7ad71931b",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "icon_skill_parameter_mujica_1.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter_mujica_1.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "7bc95da5dab5868b1c86adb207783879ddf9e5f5e73975976ffc08ad1636cae8",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "portrait-7.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/7/member_full.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "1e12424e43f5fa40831e0006a689b2e37ca55f239aefab4a7f38603ceac6a21a",
+      "size": [
+        1440,
+        1920
+      ]
+    },
+    "wordmark-2.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Band/2/band_logo.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "66b90cbbd606fb67359eca7eb33c24f87b613bc58701ed0629a8539dd1adc8d2",
+      "size": [
+        250,
+        115
+      ],
+      "trim": true
+    },
+    "icon_skill_parameter_mujica_3.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter_mujica_3.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "bf1f260c9404799cf84269d24f7cbc4f660828bab20a27e5b9e03aed5bc09f13",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "portrait-73.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/73/member_full.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "b1f3f24ce9d1b10c21981b0b120e57563ea1a1ee4ade66fb8b703e387692ac93",
+      "size": [
+        1440,
+        1920
+      ]
+    },
+    "icon_skill_parameter_yellow_1.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter_yellow_1.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "15730dbcb1dee433784e4e71879c5b4d31db28cb34e1f86b043d7b26550570b9",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "icon_skill_luck_gauge.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_luck_gauge.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "f8b029acde73c6b517062a688d03ab96e6d9d8913f4cc1e1a3037a02222b388d",
+      "size": [
+        256,
+        256
+      ]
+    },
+    "portrait-76.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/76/member_full.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "6ccff834ca5af4e6b39251452325dca5a514a6ae2578bf6f74e0b91d931ff241",
+      "size": [
+        1440,
+        1920
+      ]
+    },
+    "attr-Purple.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardType-Purple--Sprite--1133064141626684657.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "f34c1066cf76b9d1d972faf8930b5f82f4773dc26f2a5344ed883a9061b7f56d",
+      "size": [
+        64,
+        64
+      ]
+    },
+    "gacha-23.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Gacha/Banner/gacha_banner_00023.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "c1cfb132524ca8c178b5a1fe7f43e64d648b5783804ea4695367493f904c294a",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "event-5.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Story/Banner/Chapter/ui_banner_chapter_9.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "e1db39687b1b45e629db53b120f4d207038ed6560d674484e8c643de757fea33",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "gacha-2.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Gacha/Banner/gacha_banner_00002.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "6a048cf9b378fc88b5e9a86e0515a8b22cc94eb791e7adec3ff2c103ecb17e08",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "gacha-13.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/Gacha/Banner/gacha_banner_00013.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "cecae1911291dcd0b9c704e6de16b571f8970eb199a3aab1c56611025327f018",
+      "size": [
+        420,
+        180
+      ]
+    },
+    "member_background1.png": {
+      "url": "https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/MemberCommon/member_background1.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "295ada609c75f354eab728c774bad6c8ea9389d6fcc06daa66aaf20ec91cd7ac",
+      "size": [
+        1440,
+        1920
+      ]
+    },
+    "FrameSquare_6px.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/FrameSquare_6px--Sprite--7533066405191909566.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "51fedc98a9c0b7411800aa496628e2515e5b5d506c1fb599ad1e18be31dbd49f",
+      "size": [
+        18,
+        18
+      ]
+    },
+    "FormationSupportCardOutline.png": {
+      "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/FormationSupportCardOutline--Sprite--3259072604590696245.png?release=r-446fa5ab7a4d6ee030a2",
+      "pixels": "2d4cf7392d93df88f6481d405103288c35e4395ade888a7bd58e99cb336d84da",
+      "size": [
+        26,
+        26
+      ]
+    }
+  },
+  "frames": {
+    "R": [
+      [
+        0.0,
+        [
+          0.4470588266849518,
+          0.7098039388656616,
+          1.0
+        ]
+      ],
+      [
+        1.0,
+        [
+          0.4470588266849518,
+          0.7098039388656616,
+          1.0
+        ]
+      ]
+    ],
+    "SR": [
+      [
+        0.0,
+        [
+          0.9960784316062927,
+          0.9843137264251709,
+          0.5803921818733215
+        ]
+      ],
+      [
+        1.0,
+        [
+          0.9176470637321472,
+          0.772549033164978,
+          0.3803921639919281
+        ]
+      ]
+    ],
+    "SSR": [
+      [
+        0.2,
+        [
+          0.4470588266849518,
+          0.0,
+          1.0
+        ]
+      ],
+      [
+        0.6,
+        [
+          0.0,
+          1.0,
+          0.9647058844566345
+        ]
+      ],
+      [
+        0.8,
+        [
+          1.0,
+          0.8313725590705872,
+          0.0
+        ]
+      ],
+      [
+        0.9000076295109484,
+        [
+          0.9921568632125854,
+          0.501960813999176,
+          1.0
+        ]
+      ],
+      [
+        1.0,
+        [
+          1.0,
+          0.4000000059604645,
+          0.4000000059604645
+        ]
+      ]
+    ]
+  },
+  "fonts": {
+    "Cinzel.ttf": {
+      "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/cinzel/Cinzel%5Bwght%5D.ttf",
+      "sha256": "f4d83d34d1f6c741193e4acf4b3dff9531e5a67b6aa65228d00a7db72a4e0f34"
+    },
+    "NotoSerifSC.ttf": {
+      "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/notoserifsc/NotoSerifSC%5Bwght%5D.ttf",
+      "sha256": "050080d9255a86808f2945bffac582b31ef32bc36411ce29563b4961670c66f9"
+    },
+    "ShipporiMincho-Medium.ttf": {
+      "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/shipporimincho/ShipporiMincho-Medium.ttf",
+      "sha256": "700e505afc4cded2338eba29478a041e04c1c2ea5114fbb3e0b04e76c302c5d8"
+    },
+    "KleeOne-SemiBold.ttf": {
+      "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/kleeone/KleeOne-SemiBold.ttf",
+      "sha256": "b031ec426c23ca1143ef1f7d58bee7a79efe119ed654152f121c922202b303fd"
+    },
+    "ZCOOLKuaiLe-Regular.ttf": {
+      "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/zcoolkuaile/ZCOOLKuaiLe-Regular.ttf",
+      "sha256": "812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d"
+    },
+    "MaokenAssortedSans-Lite.ttf": {
+      "url": "https://raw.githubusercontent.com/maoken-fonts/MaokenAssortedSans/f01a94115444beaa60d7aefa9544fd123fb48d71/lite%20version/MaokenAssortedSans-Lite.ttf",
+      "sha256": "bdba8228f3b1831d68fc2340bf8383a16c65d939feb32c36b43a8e9d45d22403"
+    },
+    "LXGWWenKai-Medium.ttf": {
+      "url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/e52e0e1e9f561f1caa2e14c8154d3a1accee834a/fonts/TTF/LXGWWenKai-Medium.ttf",
+      "sha256": "f4b8a34d1f838fe411540cb7c97b1c384ac9738a876c4104500bc42508b2312a"
+    },
+    "LXGWWenKai-Regular.ttf": {
+      "url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/e52e0e1e9f561f1caa2e14c8154d3a1accee834a/fonts/TTF/LXGWWenKai-Regular.ttf",
+      "sha256": "2d73eea94ad808999d90c0000c239a84a33b09d4bc6ab6c5b8bbf1eda8a7fc8b"
+    }
+  }
+}

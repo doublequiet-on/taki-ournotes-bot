@@ -1,0 +1,51 @@
+/* Pink and lemon spot inks on the cool edition of the folded sheet. */
+main.foldsheet[data-band-id="3"] .lyric-page header h1 .title-phrase:last-child {
+  background: url("title-stroke.svg") left bottom .005em / 100% .31em no-repeat;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+main.foldsheet[data-band-id="3"].study-compact .console-unit {
+  background:
+    linear-gradient(136deg, #ffc2d6cc, transparent 53%),
+    radial-gradient(ellipse at 98% 0%, #fff0a8d1, transparent 45%),
+    linear-gradient(126deg, #f4e7ef, #f8f3f7 55%, #e1eaf7);
+  border-color: #b4a5b7;
+  box-shadow: inset 0 1px #fbfdff, inset 0 -1.3px #c0cee2, .3px 1.6px 0 #97a2b9, .8px 2.5px 2px #465d7b33;
+}
+main.foldsheet[data-band-id="3"] .console-bridge {
+  background: url("bridge-enamel.svg") center / 100% 100% no-repeat;
+}
+main.foldsheet[data-band-id="3"] .console-bridge .status {
+  width: 5px;
+  height: 5px;
+  background: linear-gradient(38deg, #ff789d 0 41%, #1974ca 44% 58%, #ffe166 61%);
+  box-shadow: 0 0 0 1px #fffafa, 0 0 0 1.5px #8795ad;
+}
+
+
+main.foldsheet[data-band-id="3"] .member-line::before { background: #ffd1e1; }
+main.foldsheet[data-band-id="3"] .skills article[data-skill-role="队长"] { --role-fill: #ffd6e4; }
+main.foldsheet[data-band-id="3"] .skills article[data-skill-role="激奏"] { --role-fill: #ffec9f; }
+main.foldsheet[data-band-id="3"] .relations .gachas dt { background: #ffd6e3; color: #664260; }
+main.foldsheet[data-band-id="3"] .relations .clipping::after {
+  background: repeating-linear-gradient(74deg, #fff8ce60 0 1px, transparent 1px 4px), #ffe37bd9;
+}
+main.foldsheet[data-band-id="3"] .master-full path { fill: #ffe276; }
+
+/* Larger readings share the same printed scale; the increased spacing is vertical. */
+.console-bridge {height:26px;gap:4px;}
+.console-bridge .stat-sticker {width:68px;height:24px;}
+.console-bridge .grille {width:18px;}
+.console-bridge .level-key {font-size:11.8px;}
+.console-bank .readout .rl {font-size:12.4px; font-weight:500;}
+.console-bank .readout .rv {font-size:16px; font-weight:500;}
+.console-bank .read-mid-low .rv, .console-bank .read-mid-high .rv {font-size:15.2px;}
+.console-bank .read-current .rv {font-size:17.5px; font-weight:600;}
+.console-bank .read-full .rv {font-size:19px; font-weight:600;}
+.console-bank .read-full .rl {font-size:12.5px; font-weight:600;}
+.console-unit > .master-axis {
+  border-top:1px solid #a59cae;
+  box-shadow:inset 0 1px #fffafbc9;
+  margin:1px 0 0;
+  padding-top:5px;
+}

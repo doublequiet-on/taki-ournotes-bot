@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 55" preserveAspectRatio="none">
+  <defs>
+    <linearGradient id="fascia" x2="0" y2="1"><stop stop-color="#2c1320"/><stop offset=".5" stop-color="#3d1d2b"/><stop offset=".77" stop-color="#20101b"/><stop offset="1" stop-color="#130d15"/></linearGradient>
+    <linearGradient id="fillet"><stop stop-color="#45303b"/><stop offset=".23" stop-color="#9c7366"/><stop offset=".54" stop-color="#d2b491"/><stop offset=".8" stop-color="#8e6660"/><stop offset="1" stop-color="#372632"/></linearGradient>
+    <g id="reed" fill="none" stroke-linecap="round">
+      <path d="M120 43Q233 14 405 12M144 41Q258 17 394 15" stroke="#bf978040" stroke-width=".65"/>
+      <path d="M235 24q23-8 55-11m-46 9q14-1 29-5m-3 1q18-8 34-9m-16 6q12 0 23-3" stroke="#bd91764f" stroke-width=".8"/>
+    </g>
+  </defs>
+  <path d="M0 0h850v55h-60Q670 12 425 11 180 12 60 55H0Z" fill="url(#fascia)"/>
+  <path d="M60 54Q395-32 790 54" fill="none" stroke="#0d0913" stroke-width="4"/>
+  <path d="M60 53Q202 10 425 10T790 53" fill="none" stroke="url(#fillet)" stroke-width="1.5"/>
+  <path d="M58 49Q213 6 425 7T792 49" fill="none" stroke="#a48a7a" stroke-opacity=".56" stroke-width=".7"/>
+  <use href="#reed"/><use href="#reed" transform="translate(850) scale(-1 1)"/>
+  <g transform="translate(425 10)" stroke-linejoin="round">
+    <path d="m-21-7 9 2 6-3 6 2 6-2 6 3 9-2-4 7-8 2-3 5-6 4-6-4-3-5-8-2Z" fill="#3f2830" stroke="#946e5c" stroke-width=".9"/>
+    <path d="M-18-4-7-1 0 8 7-1l11-3M-10-3-4-2 0 5l4-7 6-1" fill="none" stroke="url(#fillet)" stroke-width=".8"/>
+    <path d="m0-5 3 2-3 5-3-5Z" fill="#c29b79"/>
+  </g>
+</svg>

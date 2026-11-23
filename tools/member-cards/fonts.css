@@ -1,0 +1,7 @@
+@import url("/fontsource/roboto/wght.css");
+@import url("/fontsource/noto-sans-sc/wght.css");
+@import url("/fontsource/noto-sans-jp/wght.css");
+@font-face {font-family:"Ave Serif SC";src:url("/media/fonts/NotoSerifSC.ttf");font-weight:200 900}
+@font-face {font-family:"Ave Mincho";src:url("/media/fonts/ShipporiMincho-Medium.ttf");font-weight:500}
+@font-face {font-family:"Ave Incised";src:url("/media/fonts/Cinzel.ttf");font-weight:400 900}
+@font-face {font-family:"Maoken Assorted Sans";src:url("/media/fonts/MaokenAssortedSans-Lite.ttf");font-weight:400}

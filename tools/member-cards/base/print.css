@@ -1,0 +1,109 @@
+/* Two views of the printed stock: a full vignette at the foot of the cover
+   and a detail at the top edge of the facing page. */
+main[data-band-id="1"] { --print-name:url("graphics/mygo-watercolor-umbrella.png"); --corner-art:url("graphics/rehearsal-corner.svg"); }
+main[data-band-id="2"] { --print-name:url("graphics/mujica.svg"); --corner-art:url("graphics/mujica-corner.svg"); }
+
+
+
+.plate-illustration {
+ display:block; position:relative; height:calc(53px + 11px * var(--stat-room,0));
+ margin:auto -8px 0; background:var(--print-name) center / 100% auto no-repeat;
+ mix-blend-mode:multiply; pointer-events:none;
+}
+.lyric-page { padding-left:11px; }
+.stats.ruled { table-layout:fixed; }
+.ruled col:nth-child(1) { width:28%; }
+.ruled col:nth-child(2) { width:30%; }
+.ruled col:nth-child(3) { width:42%; }
+.stats.ruled thead th { padding-bottom:0; font-weight:470; }
+.stats.ruled tbody .reading :is(th,td) { padding:1px 0 0; line-height:1.35; }
+.stats.ruled tbody .reading:first-child :is(th,td) { padding-top:2px; }
+.ruled .reading th, .ruled tfoot th { font-weight:520; }
+.stats.ruled tbody .reading th { color:oklch(from var(--stat) .41 calc(c * .82) h); font-size:18px; line-height:1.2; }
+.ruled tr td:nth-child(2) { font-weight:450; }
+.ruled .reading td:last-child { font-weight:545; }
+.ruled .total { font-weight:565; }
+.stats.ruled tbody .rail td { padding:0 4px 5px 0; line-height:0; }
+.ruled .rail svg { display:block; width:100%; height:10px; overflow:visible; }
+.ruled .rail .ink { stroke:var(--ink); }
+.ruled .rail .tip { fill:var(--ink); }
+.ruled .axis-levels {
+  position:relative; height:14px; color:var(--secondary);
+  font-size:12px; line-height:14px; font-weight:490; text-align:center;
+  --label-width:4.8ch;
+  --left-label:clamp(0px,calc(var(--first) - var(--label-width) / 2),calc(100% - 2 * var(--label-width) - 2px));
+}
+.axis-levels span { position:absolute; top:0; width:var(--label-width); }
+.axis-levels span:first-child { left:var(--left-label); }
+.axis-levels span:last-child {
+  left:clamp(calc(var(--left-label) + var(--label-width) + 2px),calc(var(--last) - var(--label-width) / 2),calc(100% - var(--label-width)));
+}
+.stats.ruled .rail:has(.axis-levels) td { padding-bottom:2px; }
+.stats.ruled tfoot :is(td,th) { padding:7px 0 0; }
+.lyric-page .member-line { position:relative; z-index:1; width:fit-content; max-width:100%; }
+
+.corner-print {
+ position:absolute; top:0; right:0; z-index:-1; width:92px; height:43px;
+ background:var(--corner-art) top right / contain no-repeat; pointer-events:none;
+}
+main[data-band-id="1"] .corner-print { width:min(52%,154px); height:60px; top:2px; right:4px; }
+main[data-band-id="1"] .plate-illustration {
+  height:calc(119px + 14px * var(--stat-room,0));
+  flex-grow:1;
+  margin-top:18px;
+  background:none;
+  mix-blend-mode:normal;
+}
+main[data-band-id="1"] .plate-illustration::before {
+  content:"";
+  position:absolute;
+  inset:auto 4px 4px 2px;
+  /* Frame the painted area inside the PNG's transparent margins. */
+  aspect-ratio:1628 / 615;
+  background:var(--print-name) center / 109% auto no-repeat;
+  opacity:.92;
+}
+main[data-band-id="2"] .corner-print { width:119px; height:52px; }
+main[data-band-id="3"] .corner-print { width:100px; top:-1px; }
+
+
+main[data-band-id="2"] .lyric-page::before { display:none; }
+main[data-band-id="3"] .lyric-page::before { opacity:.4; }
+
+.lyric-page header h1 { margin-top:16px; margin-left:-1px; letter-spacing:-.046em; }
+.lyric-page header .jp { margin-left:0; }
+main:has(.relation-page) .gachas dd .relation-banner { width:78%; max-width:148px; }
+main:has(.relation-page) .gachas dd .relation-caption { width:100%; max-width:190px; }
+main:has(.relation-page) .gachas dd+dd { margin-top:12px; }
+.relations .events .relation-banner { width:100%; max-width:none; }
+.score-pair { grid-column:1 / -1; width:100%; border-collapse:collapse; table-layout:fixed; font-size:14px; }
+.score-pair caption { display:table-caption; text-align:left; margin:0 0 5px; }
+.score-pair col:first-child { width:82px; }
+.score-pair th { text-align:left; font-size:12px; line-height:1.34; color:var(--secondary); }
+.score-pair th, .score-pair td { padding:5px 0; }
+.score-pair td { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.score-pair tr + tr > * { border-top:1px solid #89a2aa75; }
+.score-pair tbody td:last-child { color:var(--display); }
+.ladder { grid-column:1/-1; line-height:1.35; }
+.ladder .shared-duration { margin-bottom:5px; }
+.ladder-rows {
+ --label-width:58px;
+ display:grid; grid-template-columns:var(--label-width) repeat(5,minmax(0,1fr));
+ align-items:center; font-size:14px; color:var(--value); font-variant-numeric:tabular-nums;
+}
+.ladder-rows .limits, .ladder-rows .sequence { display:contents; }
+.ladder-rows .threshold, .ladder-rows .level { padding:4px 0; }
+.ladder-rows .threshold { font-size:12px; line-height:1.28; color:var(--secondary); }
+.ladder-rows .level { font-size:14px; text-align:right; }
+.ladder-rows .limits:last-child .threshold { color:var(--heading); }
+.ladder-rows .limits:last-child .level { border-top:1px solid color-mix(in srgb,var(--heading) 21%,transparent); }
+/* On the fold-out the paper stock turns up at the bottom of the printable
+   area. The measured gap vanishes before the lowest line can be covered. */
+.return-print {
+ position:absolute; inset:auto 0 0 auto; width:100%; height:var(--imprint-height,0px);
+ overflow:hidden; pointer-events:none; z-index:-1;
+}
+
+
+.bonus-scope-part { display:inline-block; }
+.event-role { color:var(--heading); font-size:13px; line-height:1.45; }

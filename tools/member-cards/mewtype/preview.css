@@ -1,0 +1,33 @@
+main.foldsheet[data-band-id="3"] .obs-preview {
+  position: relative;
+  margin: 12px 0 5px;
+  padding: 8px 7px;
+  isolation: isolate;
+}
+main.foldsheet[data-band-id="3"] .lyric-page header .obs-preview h1 {
+  position: relative;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+main.foldsheet[data-band-id="3"] .obs-selection {
+  --raspberry: #c45179;
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px solid var(--raspberry);
+  background: linear-gradient(112deg, #fbc5d511, #ffffff05 64%);
+}
+main.foldsheet[data-band-id="3"] .obs-selection > i {
+  position: absolute;
+  box-sizing: border-box;
+  width: 5.2px;
+  height: 5.2px;
+  background: #fffdfb;
+  border: 1.15px solid var(--raspberry);
+}
+.obs-selection > .nw { left: -3px; top: -3px; }
+.obs-selection > .ne { right: -3px; top: -3px; }
+.obs-selection > .sw { left: -3px; bottom: -3px; }
+.obs-selection > .se { right: -3px; bottom: -3px; }
+main.foldsheet[data-band-id="3"] .obs-preview + .jp { margin-left: 7px; }

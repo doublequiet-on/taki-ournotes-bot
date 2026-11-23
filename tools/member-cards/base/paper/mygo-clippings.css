@@ -1,0 +1,116 @@
+/* A loose event clipping and its hand-copied figures share a slip of paper. */
+main[data-band-id="1"] .relation-page {
+  padding-top:17px;
+  padding-inline:9px 8px;
+}
+main[data-band-id="1"] .relation-page .relations { gap:17px; }
+/* Give the photo a wider measure while keeping the table and tickets on their text margins. */
+main[data-band-id="1"] .relation-page:has(.events .clipping) { padding-inline:4px; }
+.relation-page:has(.events .clipping) .gachas { margin-inline:3px 2px; }
+.relation-page .events { position:relative; isolation:isolate; padding:4px 7px 10px 2px; }
+.relation-page .events:has(.clipping) {
+  padding-inline:0;
+  filter:drop-shadow(.6px 1px .5px #5d5e4f40) drop-shadow(1px 2px 1.6px #60645422);
+}
+.relation-page .events:has(.clipping) dd {
+  grid-template-columns:7px minmax(min-content,1fr) 11px; column-gap:0;
+}
+.relation-page .events:has(.clipping) dd > * { grid-column:2; }
+.relation-page .events:has(.clipping) dt { margin-inline-start:9px; }
+.relation-page .events:has(.clipping)::before { left:1px; right:2px; }
+.relation-page .events::before {
+  content:""; position:absolute; z-index:-1; inset:-4px 0 0 -4px; pointer-events:none;
+  background:linear-gradient(117deg,#f6f1df,#fbf8ec 55%,#f5f1e1);
+  clip-path:polygon(.5% .8%, 43% .1%, 99.6% .5%, 99.8% 93%, 98.8% 99.1%, 83% 99.4%, 66% 99%, 48% 99.8%, 30% 99.3%, 12% 100%, .8% 99.4%, 0 47%);
+}
+.relation-page .events::after {
+  content:""; position:absolute; bottom:0; left:1%; width:95%; height:2px;
+  background:#82745345; clip-path:polygon(0 5%,31% 47%,55% 10%,80% 46%,100% 0,83% 72%,56% 55%,31% 86%,1% 41%);
+}
+.relation-page .events dt { margin:0 0 10px 2px; }
+.relation-page .events:has(.clipping) dd > .clipping {
+  grid-column:1 / -1; min-width:0; position:relative; display:block; margin:1px 2px 5px;
+  padding:3px 3px 5px; background:#fffdf5; transform:rotate(-1.25deg);
+  box-shadow:.4px .9px .6px #494d3c65,1.1px 2.5px 2px #65604746;
+}
+.relation-page .clipping::after {
+  content:""; position:absolute; width:26%; height:10px; top:-5px; left:52%;
+  transform:rotate(5deg); background:repeating-linear-gradient(89deg,#ffffff15 0 1px,transparent 1px 4px),#d5be81a8;
+  box-shadow:inset 0 1px #fff6d87d,inset 0 -1px #9e906c3b;
+  clip-path:polygon(1% 2%,99% 0,97% 23%,100% 41%,97% 61%,100% 73%,98% 98%,0 100%,2% 77%,0 60%,3% 45%,0 25%);
+}
+main[data-band-id="1"] .events .clipping > .relation-banner { width:100%; max-width:none; }
+.relation-page .events .relation-caption { margin:1px 1px 3px 2px; }
+.relation-page .events .event-role { width:fit-content; padding:0 2px 2px; border-bottom:1px solid #a497784f; }
+.event-targets { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; margin:2px 0; }
+.event-targets .target-group { display:flex; flex-wrap:wrap; align-items:center; gap:3px; }
+.event-targets .target-group span { margin-right:2px; font-size:13px; color:var(--secondary); }
+.event-targets img { display:block; width:20px; height:20px; object-fit:contain; }
+main[data-band-id="1"] .events .bonus-table { margin-top:4px; }
+main[data-band-id="1"] .events .bonus-table tr > :not(:first-child) { padding-left:3.25px; }
+main[data-band-id="1"] .events .bonus-table caption { margin-bottom:5px; }
+main[data-band-id="1"] .bonus-table tbody .included th {
+  position:relative; padding-inline-start:4px;
+}
+.relation-page .included th::before {
+  content:""; position:absolute; left:0; top:15%; bottom:40%; width:3px;
+  border:solid #91978988; border-width:0 0 .8px .8px; border-radius:0 0 0 2px;
+}
+main[data-band-id="1"] .gachas dt {
+  position:relative; z-index:1; margin:0 0 5px;
+}
+.relation-page .gachas { position:relative; isolation:isolate; }
+.relation-page .gachas:has(dd)::after {
+  content:""; position:absolute; z-index:-1; bottom:-3px; right:3px;
+  width:84%; height:9px; pointer-events:none; transform:rotate(-.8deg);
+  background:radial-gradient(ellipse at 66% 34%,#4a585c6b,transparent 74%);
+  filter:blur(1px);
+}
+/* A shallow cut in the notebook holds the leading edge of the strip. */
+.relation-page .gachas dt::after {
+  content:""; position:absolute; left:0; right:0; bottom:-8px; height:5px;
+  pointer-events:none;
+  background:linear-gradient(to bottom,#f6f7ef 14%,#bdc9c4 33%,#7b908de0 48%,#6c828140 72%,transparent);
+  clip-path:polygon(0 37%,21% 24%,61% 20%,100% 33%,99% 60%,68% 100%,25% 88%,1% 57%);
+}
+main[data-band-id="1"] .relations .gachas dd {
+  --uncut:linear-gradient(#000,#000);
+  --top-left:var(--uncut); --top-right:var(--uncut);
+  --bottom-left:var(--uncut); --bottom-right:var(--uncut);
+  --perforation:var(--uncut);
+  position:relative; margin-inline:3px; padding:8px 10px 7px;
+  background:
+    linear-gradient(90deg,#adc3c12e,transparent 7px,transparent 96%,#adc3c128),
+    linear-gradient(100deg,#e0e9e8,#e7edeb 70%,#e3ebe8);
+  box-shadow:inset .65px 0 #a6b8b74a,inset -.7px 0 #a6b8b759;
+  mask-image:var(--top-left),var(--top-right),var(--bottom-left),var(--bottom-right),var(--perforation);
+  mask-size:100% 100%,100% 100%,100% 100%,100% 100%,6px 100%;
+  mask-repeat:no-repeat,no-repeat,no-repeat,no-repeat,repeat-x;
+  mask-composite:intersect;
+}
+main[data-band-id="1"] .relations .gachas dd:has(+ dd) {
+  --bottom-left:radial-gradient(circle at left bottom,transparent 2.5px,#000 3px);
+  --bottom-right:radial-gradient(circle at right bottom,transparent 2.5px,#000 3px);
+}
+main[data-band-id="1"]:has(.relation-page) .relations .gachas dd + dd {
+  margin-top:0; border:0;
+  --top-left:radial-gradient(circle at left top,transparent 2.5px,#000 3px);
+  --top-right:radial-gradient(circle at right top,transparent 2.5px,#000 3px);
+  --perforation:radial-gradient(ellipse 1.25px 1.6px at 50% 1.1px,transparent 76%,#000 100%);
+}
+.relation-page .gachas dd + dd::before {
+  content:""; position:absolute; inset:0 0 auto; height:4px; pointer-events:none;
+  background:radial-gradient(ellipse 1.4px 1.7px at 50% 1.6px,#94aaa880 75%,transparent 100%) 0 0 / 6px 100% repeat-x;
+}
+main[data-band-id="1"] .relations .gachas dd:last-child {
+  box-shadow:inset .65px 0 #a6b8b74a,inset -.8px 0 #8ca19f77,
+             inset 0 -.85px #7c94957a,inset 0 -3px 4px -3px #fffef3;
+}
+main[data-band-id="1"]:has(.relation-page) .relations .gachas dd .relation-banner { width:100%; }
+main[data-band-id="1"] .relation-page:last-child {
+  padding-bottom:80px;
+}
+main[data-band-id="1"] .relation-page:last-child::before {
+  bottom:7px; right:11px; width:min(75%,119px); height:65px;
+  background-image:url('../graphics/mygo-pebble-detail.svg');
+}

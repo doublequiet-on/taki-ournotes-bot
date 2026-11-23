@@ -1,0 +1,98 @@
+/* The metal face, recessed meter bridge, and front lip share one physical enclosure. */
+main.foldsheet.study-compact .console-unit {
+  --face-top:#514e5c; --face-low:#353440;
+  position:relative; isolation:isolate; flex:none; margin:11px -5px 8px;
+  padding:5px 8px 6px; border:1px solid #332c3b; border-radius:7px 7px 6px 6px;
+  background:linear-gradient(95deg,#59576455,#ffffff07 16%,transparent 48%,#211a291d),
+             linear-gradient(169deg,var(--face-top),#444350 52%,var(--face-low));
+  box-shadow:inset 0 1px .6px #b5adbfab,inset 1px 0 #b9acbb3b,inset -1px 0 #292332,
+             inset 0 -2.5px #2b2732,0 1.5px 0 #504353,0 3px 0 #302b35,
+             1.5px 5px 3px #5546534d;
+}
+.console-unit::before,.console-unit::after {
+  position:absolute;top:6px;bottom:5px;width:2px;border-radius:1.5px;content:"";pointer-events:none;
+  background:linear-gradient(#d8a2b3,#936c83 35%,#71566c 70%,#584454);
+  box-shadow:1px 0 #241e2b;
+}
+.console-unit::before {left:1px;} .console-unit::after {right:1.3px;}
+.console-bridge {position:relative;height:25px;margin:0 0 2px;display:flex;align-items:center;gap:7px;}
+.console-bridge .stat-sticker {
+  width:72px;height:25px;display:block;flex:none;margin-left:4px;
+  transform:rotate(-2deg);
+  filter:drop-shadow(.3px 1px .4px #201b28b8) drop-shadow(.5px 1.6px 1px #21182760);
+}
+.console-bridge .grille {
+  width:38px;height:7px;margin:0 4px 0 auto;
+  background:repeating-linear-gradient(105deg,#272331 0 1.3px,#77707d 1.5px 2px,transparent 2.3px 4px);
+  border-radius:1px;transform:skewX(-2deg);opacity:.87;
+}
+.console-bridge .status {
+  width:4px;height:4px;border-radius:50%;background:#ffc5b0;box-shadow:0 0 0 1px #302631,0 0 3px #ffb999bd;
+}
+.console-bridge .fastener {
+  flex:none; position:relative; height:4px;width:4px;border-radius:50%;
+  background:linear-gradient(135deg,#c2b9bf,#847e88 55%,#65606e);
+  box-shadow:.25px .5px .55px #211b2c,inset .2px .3px .15px #d7ced6;
+}
+.console-bridge .fastener::before {content:"";position:absolute;inset:1.5px .5px;transform:rotate(-36deg);border-radius:.5px;background:#413949;}
+.console-bank {margin:4px 0 0;line-height:0;position:relative;}
+.console-bank>svg {width:100%;height:auto;display:block;}
+.level-key {
+  display:flex;align-items:center;justify-content:space-between;
+  margin:2px 1px 2px;padding:5px 4px 1px;
+  border-top:.7px solid #a192a365;color:#eee1db;
+  font:500 10.5px/1.25 "LXGW WenKai",sans-serif;
+}
+.level-key span {display:flex;align-items:center;gap:4.5px;white-space:nowrap;}
+.level-key i {display:inline-block;position:relative; flex:none;}
+.level-key .range-key {width:10px;height:2px;background:#d0c3ca;}
+.level-key .range-key::before {content:"";position:absolute;left:0;top:-1px;width:4px;height:4px;border-radius:50%;background:#e7d8de;}
+.level-key .tick-key {width:10px;height:2px;background:#f4cf88;}
+.level-key .tick-key::before {content:"";position:absolute;top:-2px;left:4.2px;width:1.5px;height:6px;background:#f4cf88;}
+.level-key .diamond-key {width:5px;height:5px;transform:rotate(45deg);background:#ffda8b;}
+.console-bank { --quiet:#cabcc8; }
+.console-bank .readout {text-anchor:middle;pointer-events:none;font-variant-numeric:tabular-nums;}
+.console-bank .readout-stem {stroke:#a79ba6;stroke-width:.7;}
+.console-bank .readout .rl {font:500 8.7px "LXGW WenKai",sans-serif;fill:#c4b9bf;}
+.console-bank .readout .rv {font:470 12.5px "Roboto Variable",sans-serif;fill:#e2d9dc;}
+.console-bank .read-mid-low .rv,.console-bank .read-mid-high .rv {font-size:11.7px;fill:#d6ccd2;}
+.console-bank .read-current .rv {font-size:14.8px;font-weight:620;fill:#fff6e7;}
+.console-bank .read-current .rl {fill:#f3e7da;}
+.console-bank .read-full .rv {font-size:15.3px;font-weight:650;fill:#ffda8e;}
+.console-bank .read-full .rl {fill:#f8d99b;font-size:9.4px;}
+.console-bank .read-full .readout-stem {stroke:#f5cb81;}
+.console-bank .master-axis {width:100%;height:auto;display:block;margin-block:7px 2px;}
+.level-key {margin:0 2px 5px;padding-top:4px;}
+
+/* Pearl-lilac equipment case; the folded leaf is visible around the edges. */
+main.foldsheet.study-compact .console-unit {
+  margin:10px 0 4px;padding:5px 6px 4px;border:.8px solid #b4a4b0;border-radius:5px 5px 4px 4px;
+  background:linear-gradient(125deg,#f1e8ec 0%,#f3eeef 53%,#e7e3e8 100%);
+  box-shadow:inset 0 1px #fffaf8,inset 0 -1.3px #d7ccd4,.3px 1.6px 0 #ad9eaa,.8px 2.5px 2px #6e58662e;
+}
+.console-unit::before,.console-unit::after {width:1.2px;bottom:4px;background:linear-gradient(#f5dce2,#cdbfc9 60%,#bda9b9);box-shadow:none;}
+.console-unit::after {right:1px;}
+.console-bridge {height:23px;margin:0;gap:5.5px;}
+.console-bridge .stat-sticker {
+  width:63px;height:22px;margin-left:2px;
+  filter:drop-shadow(0 .55px .32px #5d475550) drop-shadow(.35px 1px .6px #775d6a30);
+}
+.console-bridge .fastener {width:3px;height:3px;background:linear-gradient(135deg,#fffafa,#c8bdc7 55%,#a69ba8);box-shadow:.2px .4px .4px #776a7a70;}
+.console-bridge .fastener::before {inset:1.2px .36px;background:#938491;}
+.console-bridge .grille {width:26px;height:4px;margin:0 3px 0 4px;background:repeating-linear-gradient(105deg,#a696a3 0 1.2px,#f6eff3 1.5px 2px,transparent 2.3px 3.7px);}
+.console-bridge .status {width:3px;height:3px;background:#ea987e;box-shadow:0 0 0 .7px #b89a9b,0 0 1.9px #d8937e85;}
+.console-bridge .level-key {margin:0 0 0 auto;padding:0;border:0;color:#756171;font:500 9px/1.2 "LXGW WenKai",sans-serif;}
+.console-bridge .level-key span {gap:3px;}
+.console-bridge .tick-key,.console-bridge .tick-key::before {background:#9c7337;}
+.console-bank {margin-top:3px;}
+.console-bank .readout .rv,.console-bank .readout .rl {font-family:"LXGW WenKai",sans-serif;}
+.console-bank .readout .rl {font-size:8.7px;fill:#756976;}
+.console-bank .readout .rv {font-size:12.6px;font-weight:400;fill:#665667;}
+.console-bank .readout-stem {stroke:#aba0a6;}
+.console-bank .read-mid-low .rv,.console-bank .read-mid-high .rv {font-size:11.8px;fill:#776a77;}
+.console-bank .read-current .rv {font-size:14px;font-weight:500;fill:#534054;}
+.console-bank .read-current .rl {fill:#776371;}
+.console-bank .read-full .rv {font-size:15.1px;font-weight:600;fill:#67374c;}
+.console-bank .read-full .rl {font-size:9px;fill:#926937;}
+.console-bank .read-full .readout-stem {stroke:#bd9358;}
+.art-page > .master-axis {flex:none; width:100%; height:auto; margin:7px 0 2px;}

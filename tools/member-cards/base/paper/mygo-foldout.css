@@ -1,0 +1,27 @@
+/* Let a short opening phrase lead the rest of the title on relation-bearing folds. */
+.lyric-page header h1 { display:flex; flex-direction:column; align-items:start; gap:1px; margin:12px 0 3px -1px; line-height:1.08; font-size:37px; }
+.lyric-page header h1 wbr { display:none; }
+.lyric-page header h1 .title-phrase { display:block; }
+.lyric-page header h1 .title-phrase:first-child:has(+ wbr) { font-size:27px; line-height:1.18; }
+.lyric-page .section { margin:18px 0 9px; }
+.skills { row-gap:15px; }
+article { column-gap:5px; }
+.skillhead .kind { margin-right:4px; }
+.skillhead h3 { letter-spacing:-.012em; }
+.skillhead { line-height:1.35; }
+.clauses { row-gap:5px; }
+.condition { line-height:1.42; }
+.effect .sequence { margin-top:3px; }
+.relation-page { padding-left:11px; padding-right:11px; }
+.relations { gap:15px; }
+.relations .events .relation-banner { width:90%; }
+.gachas dt { margin-bottom:2px; }
+main .relations .gachas dd {
+ display:grid; grid-template-columns:30px minmax(0,1fr);
+ align-items:start; column-gap:6px; row-gap:3px; padding-block:6px;
+}
+main .relations .gachas dd + dd { margin:0; border-top:1px solid #728d981f; }
+main:has(.relation-page) .gachas dd .relation-banner { grid-area:1/2; width:100%; max-width:147px; }
+.gachas .relation-id { grid-area:1/1; margin:0; line-height:1.4; }
+.gachas .relation-name { grid-area:2/2; line-height:1.33; font-size:14px; }
+.gachas .relation-caption { display:contents; }

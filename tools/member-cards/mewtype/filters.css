@@ -1,0 +1,142 @@
+/* Paper interpretation of a single OBS Filters window. The index follows the
+   actual height of each section so no selection can hide a card effect. */
+main.foldsheet[data-band-id="3"] .filter-panel {
+  --index-width: 42px;
+  --field-width: 73px;
+  --rule: #c9c4cb;
+  margin: 16px 0 0;
+  min-width: 0;
+  border: 1px solid #bab5c0;
+  border-radius: 3px;
+  background: #fbfaf8;
+  box-shadow: 0 1px 1px #51495217;
+}
+main.foldsheet[data-band-id="3"] .filter-panel {
+  & > h2.section {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    padding: 5px 9px;
+    color: #fff9f5;
+    background: linear-gradient(102deg,#756b80,#605a6c 70%,#6b6474);
+    border-radius: 2px 2px 0 0;
+    font-size: 17px;
+    line-height: 1.2;
+    font-weight: 600;
+  }
+  & > h2.section::before {
+    content: "";
+    width: 15px; height: 15px;
+    background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff9f5' stroke-width='1.25' stroke-linecap='round'%3E%3Cpath d='M1 4h4m4 0h6M1 11h7m4 0h3'/%3E%3Ccircle cx='7' cy='4' r='2'/%3E%3Ccircle cx='10' cy='11' r='2'/%3E%3C/svg%3E");
+  }
+  & > h2.section::after {
+    content: "";
+    margin: 0 1px 0 auto;
+    flex: none; width: 15px; height: 6px;
+    background: radial-gradient(circle, #e9e2ea99 .8px, transparent 1px) 0 0 / 4px 3px;
+  }
+  & .skills { display: block; }
+  & .skills article {
+    display: grid;
+    grid-template-columns: var(--index-width) minmax(0, 1fr);
+    gap: 0; padding: 0; margin: 0;
+    border: 0; border-radius: 0; background: transparent;
+  }
+  & .skills article:not(:last-child)::after { content: none; }
+  & .skills article + article { border-top: 1px solid var(--rule); }
+  & .filter-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 11px 2px 0;
+    border-right: 1px solid #c7c0ca;
+    background: linear-gradient(180deg,color-mix(in srgb,var(--role-fill) 55%,#f3f0f1) 0, #efecef 60px, #f0edf0 100%);
+  }
+  & .skills article:last-child .filter-rail { border-radius: 0 0 0 2px;}
+  & .filter-rail .skill-icon {
+    display: block; width: 25px; height: 25px; margin: 0;
+    filter: drop-shadow(0 .7px .5px #51444423);
+  }
+  & .filter-rail .kind {
+    padding: 0; margin: 0;
+    background: transparent; color: #53495f;
+    font: 600 12.5px/1.45 "Noto Sans SC Variable",sans-serif;
+    letter-spacing: .035em;
+  }
+  & .filter-body { min-width: 0; padding: 10px 8px 11px 9px; }
+  & .skillhead { margin: 0 0 7px; padding-bottom: 5px; border-bottom: 1px solid #d6d0d5; }
+  & .skillhead h3 { display: block; font-size: 16.8px; line-height: 1.28; color: #453b55; }
+  & .skillhead .keep { max-width: 100%; white-space: normal; }
+  & .clauses { display: grid; gap: 6px; }
+  & .effect, & .condition, & .ladder { margin: 0; }
+  & .condition { font-size: 14.6px; line-height: 1.46; }
+  & .tier-guide {
+    display: grid;
+    grid-template-columns: var(--field-width) minmax(0,1fr);
+    align-items: end;
+    margin: 4px 0 1px;
+  }
+  & .field-key, & .duration-field > :first-child, & .skills .duration-label.field-key {
+    margin: 0; color: #605665;
+    font-size: 12px; line-height: 1.4; font-weight: 500;
+  }
+  & .tier-captions {
+    grid-column: 2; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+    font: 500 10px/1.45 "Roboto Variable", sans-serif;
+    font-variant-numeric: tabular-nums;
+    color: #726976; text-align: center;
+  }
+  & .tier-captions > :last-child { color: #806640; }
+  & .skills .sequence {
+    display: grid; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr;
+    min-width: 0; padding: 0; margin: 0; gap: 0;
+  }
+  & .skills .effect > .sequence { margin-left: var(--field-width); }
+  & .skills .level {
+    display: block; min-width: 0;
+    padding: 3px 0;
+    text-align: center;
+    background: linear-gradient(#f0edf0, #f7f5f4);
+    border-block: 1px solid #ded9df;
+    box-shadow: inset .7px 0 #d4cfd4;
+    color: #514959;
+    font: 500 14px/1.35 "Roboto Variable", "Noto Sans SC Variable",sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  & .skills .sequence > .level:last-child, & .score-pair td:last-child .level {
+    color: #584032; font-weight: 650; background: linear-gradient(#faecc6,#fff5da);
+    border-color: #dac9a4;
+  }
+  & .ladder .duration-field {
+    display: grid; grid-template-columns: var(--field-width) auto; align-items: center;
+    margin: 0 0 7px;
+  }
+  & .duration-field .readout {
+    padding: 1px 8px;
+    justify-self: start; border: 1px solid #d5ced6;
+    border-radius: 2px; background: #f2eff1;
+    box-shadow: inset 0 1px 1px #59445f0f;
+    color: #423849; font-weight: 600; font-size: 14px;
+  }
+  & .ladder .ladder-rows { display: block; }
+  & .ladder-rows::before, & .score-pair tbody::before { content: none; }
+  & .ladder-rows .limits {
+    display: grid; grid-template-columns: var(--field-width) minmax(0,1fr);
+    align-items: stretch; margin: 0; gap: 0;
+  }
+  & .ladder-rows .threshold, & .score-pair th {
+    align-self: center; text-align: left; padding: 3px 3px 3px 0;
+    font-size: 12px; line-height: 1.22;
+  }
+  & .ladder-rows .level { height: 100%; align-content: center; }
+  & .ladder-rows .limits + .limits .level { border-top: 0; }
+  & .score-pair { width: 100%; table-layout: fixed; }
+  & .score-pair col:first-child { width: var(--field-width); }
+  & .score-pair td { padding: 0; }
+  & .score-pair thead th {
+    padding: 2px 0; text-align: center; color: #726976;
+    font: 500 10px/1.45 "Roboto Variable", sans-serif;
+  }
+}

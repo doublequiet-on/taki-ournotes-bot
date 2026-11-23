@@ -1,0 +1,293 @@
+/* The event is printed as a playbill. Each recruitment entry has a numbered tear-off stub. */
+main[data-band-id="2"] .relation-page {
+  padding-inline: 8px 9px;
+}
+.relation-page .relations { gap: 17px; }
+main[data-band-id="2"] .relations dt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  margin-bottom: 6px;
+  font-size: 16.5px;
+  letter-spacing: .055em;
+}
+.relation-page .relations dt::after {
+  content: "";
+  flex: 1;
+  height: 5px;
+  background: linear-gradient(90deg,#90748288,#bfa7b0);
+  clip-path: polygon(0 43%,calc(100% - 6px) 43%,calc(100% - 3px) 0,100% 50%,calc(100% - 3px) 100%,calc(100% - 6px) 57%,0 57%);
+}
+/* The section title is printed on the sheet with the event's own serial. */
+main[data-band-id="2"] .events > dt {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+}
+.relation-page .events dd {
+  --poster-type: #f1e9eb;
+  --poster-secondary: #cfc0ca;
+  --poster-rule: #795f6c;
+  gap: 0;
+  position: relative;
+  padding: 0 4px 4px;
+  border: 9px solid #704634;
+  border-image: url("event-walnut-frame.svg") 18 round;
+  background:
+    radial-gradient(ellipse 80% 45% at 10% 108%,#51162885,transparent 88%),
+    linear-gradient(111deg,#27151f,#1a131d 62%,#201720);
+  color: var(--poster-type);
+  box-shadow: 0 .7px .6px #271822, 1.1px 2.4px 2.2px #130d16b3, 2px 4px 5px #1208116b;
+}
+main[data-band-id="2"] .events .relation-caption {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  container-type: inline-size;
+  padding: 4px 7px 8px;
+  margin: 0 -4px;
+  color: var(--poster-type);
+  background:
+    radial-gradient(ellipse 88% 130% at 78% 121%,#a21439 0%,#74112e 31%,#4c112680 67%,transparent 92%),
+    linear-gradient(112deg,#160f1b,#34101f 54%,#260e1b);
+}
+.relation-page .events .relation-caption::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: clamp(55px,29cqi,70px);
+  aspect-ratio: 477 / 517;
+  top: -15px;
+  right: -6px;
+  opacity: .76;
+  background: url("alea-emblem.svg") center / contain no-repeat;
+  filter: grayscale(.64) brightness(1.24);
+  pointer-events: none;
+}
+.relation-page .events .poster-masthead {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+  margin-right: clamp(46px,24cqi,60px);
+  color: #d5bec4;
+  font: 600 10.4px/1.4 SimSun,serif;
+  letter-spacing: .16em;
+}
+.relation-page .events .poster-masthead::after {
+  content: "";
+  order: 1;
+  flex: 1;
+  height: 3px;
+  border-block: .6px solid #ac8d738c;
+}
+.relation-page .events .relation-id {
+  order: 2;
+  margin: 0;
+  font: 10.5px/1.2 Georgia,serif;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: .045em;
+  color: inherit;
+}
+.relation-page .events .relation-name {
+  display: block;
+  margin: 0;
+  color: var(--poster-type);
+  font: 700 clamp(21px,11.75cqi,27px)/1.09 "Times New Roman",SimSun,serif;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.relation-page .events .relation-name.has-poster-tag {
+  font-style: italic;
+  font-size: clamp(17px,8.4cqi,20px);
+  line-height: 1.06;
+  font-weight: 400;
+}
+.relation-page .events .relation-name .keep { white-space: normal; }
+.relation-page .events .relation-name .poster-tag {
+  display: block;
+  margin-top: 1px;
+  font: 700 clamp(22px,12.25cqi,27px)/1.04 "Times New Roman",SimSun,serif;
+  letter-spacing: -.045em;
+}
+main[data-band-id="2"] .events .clipping {
+  margin: 0 -4px 1px;
+  border-top: 2px solid #9c7d68;
+  border-bottom: 2px solid #65243a;
+}
+main[data-band-id="2"] .events .relation-banner {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: none;
+  box-shadow: none;
+}
+.relation-page .events .event-role {
+  margin: 4px 2px 1px;
+  color: var(--poster-type);
+}
+main[data-band-id="2"] .events .event-targets {
+  margin: 5px 2px 3px;
+  gap: 3px 8px;
+}
+main[data-band-id="2"] .events .target-group { gap: 2.5px; }
+main[data-band-id="2"] .events .target-group span { color: var(--poster-secondary); }
+main[data-band-id="2"] .events .target-group img { width: 16px; height: 16px; }
+
+.relation-page .bonus-table {
+  width: 100%;
+  table-layout: auto;
+  margin: 3px 0 0;
+  border-bottom: 2px double var(--poster-rule);
+  font: 12px/1.35 "Roboto Variable",Arial,sans-serif;
+  font-variant-numeric: lining-nums tabular-nums;
+  color: var(--poster-type);
+}
+.relation-page .bonus-table caption {
+  padding: 5px 2px 3px;
+  margin: 0;
+  border-top: 1px solid var(--poster-rule);
+  color: var(--poster-type);
+  font: 600 12px/1.35 SimSun,serif;
+}
+.relation-page .bonus-table :is(th,td) {
+  padding: 4px 0;
+  font-weight: 400;
+}
+.relation-page .bonus-table :is(th,td):not(:first-child) {
+  padding-inline: 1px;
+  text-align: center;
+  border-left: .65px solid #b19aaa3d;
+}
+.relation-page .bonus-table th:first-child {
+  width: 1%;
+  padding-left: 2px;
+  padding-right: 0;
+  color: inherit;
+  white-space: nowrap;
+  font: 11px/1.25 SimSun,serif;
+}
+.relation-page .bonus-table thead { color: var(--poster-secondary); border-bottom: .7px solid var(--poster-rule); }
+.relation-page .bonus-table thead th { padding-block: 2px; }
+.relation-page .bonus-table tbody tr:not(.included) { color: #fae9ec; background: #821c3b52; }
+.relation-page .bonus-table tbody tr:not(.included) td { font-weight: 620; }
+.relation-page .bonus-table tr.included { color: var(--poster-secondary); }
+.relation-page .bonus-table .included th {
+  position: relative;
+  padding: 3px 0 3px 6px;
+  white-space: nowrap;
+  color: inherit;
+  font-size: 10px;
+}
+.relation-page .bonus-table .included th::before {
+  content: "";
+  position: absolute;
+  width: 3px;
+  height: 6px;
+  top: 2px;
+  left: 1px;
+  border: solid #9b7887;
+  border-width: 0 0 .8px .8px;
+}
+.relation-page .bonus-table .included td { padding-block: 3px; }
+
+main[data-band-id="2"] .gachas dd {
+  --stub: 33px;
+  --paper-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='78' height='78'%3E%3Cfilter id='f' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72 .64' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='2.5 0 0 0 -.75 2.5 0 0 0 -.75 2.5 0 0 0 -.75 0 0 0 0 .13'/%3E%3C/filter%3E%3Cpath fill='%23808080' filter='url(%23f)' d='M0 0h78v78H0z'/%3E%3C/svg%3E");
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--stub) minmax(0,1fr);
+  grid-auto-flow: row;
+  gap: 0;
+  padding: 0;
+  border-block: .75px solid;
+  border-color: #e1c48e #a28456 #80623f;
+  background:
+    var(--paper-fibre) 0 0 / 48px 48px,
+    linear-gradient(110deg,#ad8d60,#c7ac7e 26%,#d4bd96 52%,#c2a77b 79%,#b4986c);
+  background-blend-mode: soft-light,normal;
+  box-shadow: inset 0 1px 1px #ffebbd77, inset 0 -1px 1px #6a482e44;
+  mask-image:
+    radial-gradient(circle at var(--stub) 0,transparent 2.7px,#000 3.15px),
+    radial-gradient(circle at var(--stub) 100%,transparent 2.7px,#000 3.15px);
+  mask-composite: intersect;
+}
+main[data-band-id="2"] .gachas dd::after {
+  content: "";
+  position: absolute;
+  inset: 1.5px 1.5px 1.5px calc(var(--stub) + 1.5px);
+  border: .6px solid;
+  border-color: #8e6b40 #f3dab0 #ebce99 #8d6d46;
+  pointer-events: none;
+}
+main[data-band-id="2"] .gachas dd + dd { margin-top: 6px; }
+main[data-band-id="2"] .gachas dd .relation-caption { display: contents; }
+main[data-band-id="2"] .gachas dd .relation-id {
+  grid-area: 1 / 1 / 3 / 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+  position: relative;
+  background:
+    var(--paper-fibre) 0 0 / 43px 43px,
+    repeating-linear-gradient(#694d33 0 1.6px,transparent 1.6px 3.5px) right .7px top 4px / .8px calc(100% - 8px) no-repeat,
+    repeating-linear-gradient(#f9e0a9 0 1.6px,transparent 1.6px 3.5px) right top 4.4px / .8px calc(100% - 8px) no-repeat,
+    linear-gradient(90deg,transparent 2px,#835f398c 2.2px 2.8px,#f8deb1b0 3px 3.6px,transparent 4px),
+    linear-gradient(122deg,#997549 0%,#d6b77e 22%,#b89258 40%,#bd9559 48%,#e6cc98 59%,#cfac72 70%,#a57f4b 89%,#c3a374);
+  background-blend-mode: soft-light,normal,normal,normal,normal;
+  color: #4b352a;
+  text-shadow: 0 .4px #fff0c8a8;
+  font: 9.5px/1.2 Georgia,serif;
+  letter-spacing: .12em;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.relation-page .gachas .relation-id b {
+  font: 600 17px/1.12 Georgia,serif;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -.045em;
+  color: #432c23;
+  text-shadow: 0 .5px #fff0c3, 0 -.3px #74563770;
+}
+.relation-page .gachas .relation-id::before,
+.relation-page .gachas .relation-id::after {
+  content: "";
+  position: absolute;
+  inset-inline: 3px 4px;
+  height: 8px;
+  background: url("ticket-engraving.svg") center / contain no-repeat;
+  pointer-events: none;
+}
+.relation-page .gachas .relation-id::before { top: 11%; }
+.relation-page .gachas .relation-id::after { bottom: 11%; transform: rotate(180deg); }
+.relation-page .gachas dd:not(:has(.relation-banner)) .relation-id::before,
+.relation-page .gachas dd:not(:has(.relation-banner)) .relation-id::after { content: none; }
+main[data-band-id="2"] .gachas dd .relation-banner {
+  grid-area: 1 / 2;
+  display: block;
+  width: calc(100% - 9px);
+  max-width: none;
+  height: auto;
+  margin: 4.5px 4.5px 0;
+  box-shadow: 0 -.6px .4px #785b3c, 0 .7px .4px #f5dfb7;
+}
+.relation-page .gachas dd .relation-name {
+  grid-area: 2 / 2;
+  display: block;
+  min-width: 0;
+  padding: 4px 5px 5px;
+  color: #352520;
+  font: 600 12.5px/1.36 Georgia,SimSun,serif;
+  letter-spacing: .015em;
+}
+.relation-page .gachas .pool-qualifier {
+  display: inline-block;
+  max-width: 100%;
+}

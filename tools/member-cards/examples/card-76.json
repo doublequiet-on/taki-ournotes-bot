@@ -1,0 +1,178 @@
+{
+  "id": 76,
+  "title": "辉煌的步伐",
+  "jpTitle": "煌めきのパッスス",
+  "character": "Mortis / 若叶睦",
+  "band": "Ave Mujica",
+  "bandId": 2,
+  "bandColor": "#881144",
+  "category": "常驻",
+  "maxLevel": 90,
+  "stats": [
+    {
+      "label": "表演",
+      "initial": 12050,
+      "max": 29631,
+      "color": "#FF8899"
+    },
+    {
+      "label": "技巧",
+      "initial": 12705,
+      "max": 31240,
+      "color": "#77BBDD"
+    },
+    {
+      "label": "形象",
+      "initial": 16373,
+      "max": 40260,
+      "color": "#FFDD88"
+    }
+  ],
+  "skills": [
+    {
+      "role": "队长",
+      "name": "紫苑&Ave Mujica形象值UP",
+      "icon": "icon_skill_parameter_yellow_1.png",
+      "kind": "leader",
+      "skillId": 64,
+      "sourceTexts": [
+        "紫苑属性的成员形象值提升42.0% 并且Ave Mujica成员的形象值提升48.0%",
+        "紫苑属性的成员形象值提升52.0% 并且Ave Mujica成员的形象值提升48.0%",
+        "紫苑属性的成员形象值提升62.0% 并且Ave Mujica成员的形象值提升48.0%",
+        "紫苑属性的成员形象值提升72.0% 并且Ave Mujica成员的形象值提升48.0%",
+        "紫苑属性的成员形象值提升102.0% 并且Ave Mujica成员的形象值提升48.0%"
+      ]
+    },
+    {
+      "role": "演出",
+      "name": "得分UP",
+      "icon": "icon_skill_scoreup.png",
+      "kind": "live",
+      "skillId": 3,
+      "sourceTexts": [
+        "【简单】5.0秒内得分提升70.0%",
+        "【简单】5.0秒内得分提升80.0%",
+        "【简单】5.0秒内得分提升90.0%",
+        "【简单】5.0秒内得分提升100.0%",
+        "【简单】5.0秒内得分提升130.0%"
+      ]
+    },
+    {
+      "role": "激奏",
+      "name": "LUCK抽选条累积量UP",
+      "icon": "icon_skill_luck_gauge.png",
+      "kind": "gekisou",
+      "skillId": 9,
+      "sourceTexts": [
+        "LUCK激奏开始后2秒内\n抽选条累积量提升300.0%",
+        "LUCK激奏开始后3秒内\n抽选条累积量提升300.0%",
+        "LUCK激奏开始后4秒内\n抽选条累积量提升300.0%",
+        "LUCK激奏开始后5秒内\n抽选条累积量提升300.0%",
+        "LUCK激奏期间\n抽选条累积量提升300.0%"
+      ]
+    }
+  ],
+  "release": "r-446fa5ab7a4d6ee030a2",
+  "portrait": "portrait-76.png",
+  "frame": "frame-SSR.png",
+  "rarityIcon": "RarityIconCenter_SSR.png",
+  "attributeIcon": "attr-Purple.png",
+  "attributeName": "紫苑",
+  "rarityLabel": "SSR",
+  "relations": {
+    "gachas": [
+      {
+        "id": 23,
+        "name": "光降る宮殿のエピソディウムガチャ",
+        "banner": "gacha-23.png"
+      }
+    ],
+    "events": [
+      {
+        "id": 5,
+        "role": "加成",
+        "name": "移ろう月のサルタティオ",
+        "isReward": false,
+        "rewardLabel": "累计 75,000 PT 获得本卡",
+        "cardBonuses": {
+          "scope": "活动 PT、本卡活动综合力",
+          "rows": [
+            {
+              "name": "合计",
+              "values": [
+                60,
+                70,
+                80,
+                90,
+                100
+              ]
+            },
+            {
+              "name": "其中专属",
+              "values": [
+                30,
+                35,
+                40,
+                45,
+                50
+              ]
+            }
+          ]
+        },
+        "banner": "event-5.png",
+        "targets": {
+          "attributes": [
+            {
+              "image": "attr-Purple.png",
+              "name": "紫苑"
+            }
+          ],
+          "bands": [
+            {
+              "image": "band-2-emblem.png",
+              "name": "Ave Mujica"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "characterId": 7,
+  "cultivation": {
+    "trainingStage": 5,
+    "trainingBonus": 10113,
+    "awakeningStage": 5,
+    "awakeningBonus": 10113,
+    "total": 121357,
+    "maxLevel": 90,
+    "stats": [
+      {
+        "key": "performance",
+        "initial": 12050,
+        "base": 29631,
+        "trainingBonus": 2963,
+        "awakeningBonus": 2963,
+        "full": 35557
+      },
+      {
+        "key": "technique",
+        "initial": 12705,
+        "base": 31240,
+        "trainingBonus": 3124,
+        "awakeningBonus": 3124,
+        "full": 37488
+      },
+      {
+        "key": "visual",
+        "initial": 16373,
+        "base": 40260,
+        "trainingBonus": 4026,
+        "awakeningBonus": 4026,
+        "full": 48312
+      }
+    ]
+  },
+  "jpDebutDate": "2026-11-08",
+  "logo": "wordmark-2.png",
+  "emblem": "band-2-emblem.png"
+}

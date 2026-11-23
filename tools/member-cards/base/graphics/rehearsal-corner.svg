@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 184 88" fill="none">
+  <title>排练手稿的一角</title>
+  <desc>横线纸上蓝笔写着「ことば」，下方有铅笔记下的一小节节奏和擦改的笔迹。</desc>
+  <defs>
+    <path id="page" d="M14 -9 190 -9 190 66 179 67 173 66 167 69 158 68 147 71 139 70 132 72 123 71 115 74 107 73 98 76 88 75 77 78 69 76 58 79 50 78 41 80Z"/>
+    <clipPath id="paper"><use href="#page"/></clipPath>
+  </defs>
+  <use href="#page" fill="#dee9e8"/>
+  <g clip-path="url(#paper)">
+    <g transform="rotate(-5 103 38)">
+      <path d="M9 9h181M9 23h181M9 37h181M9 51h181M9 65h181M9 79h181"
+        stroke="#94b2ba" stroke-width="1" opacity=".72"/>
+      <path d="M43 -4v88" stroke="#a7949b" stroke-width=".95" opacity=".65"/>
+      <g fill="#f7f8f1" stroke="#a6babd" stroke-width=".8">
+        <circle cx="33" cy="14" r="3.3"/><circle cx="33" cy="47" r="3.3"/>
+      </g>
+      <!-- Original working header, written in blue ink. -->
+      <g stroke="#36627a" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M66 15q5-1.7 10.4-.1l-3.9 1.6m-6.6 4.1q-3 4.6 2.2 5.5 4.5.8 10.1-.4" stroke-width="1.85"/>
+        <path d="M85 12.6q1.4 4.3 4.1 7.2m5.1-3.9q-10.3 4.4-10.2 8.3.5 3.4 12.1 1.8" stroke-width="1.85"/>
+        <path d="M103.3 12.8q-2.6 6.8-1.3 13.1l1.8-3.3m4-5.2q4.9.4 10.5-1.3m-4.5-3.4q-.9 6.3.4 11.1.6 3.6-3.3 3.6-4.2.1-3.6-2.4 1.2-3.6 11.9 1.5m-2.3-15.8 2.1 2.5m.9-4.4 2.1 2.3" stroke-width="1.8"/>
+        <path d="M63 32.1q15-.7 29.5-.4m3.8 0 6-.2" stroke-width="1.05" opacity=".62"/>
+      </g>
+      <!-- The faint first beat has been rubbed out and rewritten to its right. -->
+      <g transform="rotate(1.6 125 52)" stroke-linecap="round" stroke-linejoin="round">
+        <g opacity=".32" stroke="#677271" stroke-width="1.6">
+          <path d="M127 55V42"/><ellipse cx="124.4" cy="55.6" rx="3.2" ry="2" transform="rotate(-16 124.4 55.6)" fill="#677271"/>
+        </g>
+        <path d="m120.3 53 10.7-3m-11 8 9.6-1.7" stroke="#e4eeea" stroke-width="2.3"/>
+        <g fill="#526365">
+          <ellipse cx="85" cy="55.4" rx="4" ry="2.7" transform="rotate(-22 85 55.4)"/>
+          <ellipse cx="101.8" cy="56.4" rx="3.9" ry="2.6" transform="rotate(-19 101.8 56.4)"/>
+          <ellipse cx="138.9" cy="54.4" rx="4.1" ry="2.7" transform="rotate(-21 138.9 54.4)"/>
+        </g>
+        <path d="m88.3 54.5.1-16.8 16.7 1.2-.1 16.7m-16.6-16.1 16.5 1.1m37.1 12.7.1-17.1" stroke="#526365" stroke-width="1.65"/>
+        <path d="m142.1 36.5q6.6 3.3 4.7 8.8m-21.9 16.4q7.2 2 12.3-2.5m-3.4.4 3.8-.7-1.4 3.3" stroke="#657374" stroke-width="1.2"/>
+        <path d="m160.5 38.4-.7 19.5m3.9-19.5-.5 19" stroke="#667577" stroke-width="1.45"/>
+      </g>
+    </g>
+  </g>
+</svg>

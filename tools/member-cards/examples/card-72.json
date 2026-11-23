@@ -1,0 +1,266 @@
+{
+  "id": 72,
+  "title": "今晚，为魔法所困",
+  "jpTitle": "今宵、魔法に囚われて",
+  "character": "椎名立希",
+  "band": "MyGO!!!!!",
+  "bandColor": "#3388BB",
+  "category": "限定",
+  "maxLevel": 90,
+  "stats": [
+    {
+      "label": "表演",
+      "initial": 12410,
+      "max": 30514,
+      "color": "#FF8899"
+    },
+    {
+      "label": "技巧",
+      "initial": 16310,
+      "max": 40104,
+      "color": "#77BBDD"
+    },
+    {
+      "label": "形象",
+      "initial": 12410,
+      "max": 30514,
+      "color": "#FFDD88"
+    }
+  ],
+  "skills": [
+    {
+      "role": "队长",
+      "name": "MyGO!!!!!&琉金以外技巧值UP",
+      "icon": "icon_skill_parameter_mygo_3.png",
+      "clauses": [
+        {
+          "condition": "MyGO!!!!! 成员的技巧值提升",
+          "values": [
+            "42%",
+            "52%",
+            "62%",
+            "72%",
+            "102%"
+          ]
+        },
+        {
+          "condition": "每编入 1 名非琉金属性成员，全体成员技巧值额外提升 24%。最多 2 名，上限 48%。",
+          "values": [],
+          "breakBefore": "最多 2 名"
+        }
+      ],
+      "kind": "leader",
+      "skillId": 61,
+      "annotation": {
+        "type": "memberStack",
+        "values": [
+          [
+            4200,
+            5200,
+            6200,
+            7200,
+            10200
+          ]
+        ],
+        "band": 1,
+        "stat": 1001,
+        "excluded": 4,
+        "count": 2,
+        "step": 2400
+      }
+    },
+    {
+      "role": "演出",
+      "name": "得分UP (PERFECT)",
+      "icon": "icon_skill_scoreup.png",
+      "clauses": [
+        {
+          "condition": "5 秒内，PERFECT 及以上得分提升",
+          "values": [
+            "85%",
+            "95%",
+            "105%",
+            "115%",
+            "145%"
+          ]
+        },
+        {
+          "condition": "出现 GOOD 及以下判定前，提升至",
+          "values": [
+            "95%",
+            "105%",
+            "115%",
+            "125%",
+            "155%"
+          ]
+        }
+      ],
+      "kind": "live",
+      "skillId": 9,
+      "annotation": {
+        "type": "perfectScore",
+        "values": [
+          [
+            8500,
+            9500,
+            10500,
+            11500,
+            14500
+          ],
+          [
+            9500,
+            10500,
+            11500,
+            12500,
+            15500
+          ]
+        ],
+        "seconds": 5
+      }
+    },
+    {
+      "role": "激奏",
+      "name": "LUCK pt获得",
+      "icon": "icon_skill_luck_point.png",
+      "clauses": [
+        {
+          "condition": "触发 LUCKY RUSH 时，获得 LUCK pt",
+          "values": [
+            "25 pt",
+            "30 pt",
+            "35 pt",
+            "40 pt",
+            "50 pt"
+          ]
+        }
+      ],
+      "kind": "gekisou",
+      "skillId": 15
+    }
+  ],
+  "release": "r-446fa5ab7a4d6ee030a2",
+  "portrait": "portrait-72.png",
+  "frame": "frame-SSR.png",
+  "rarityIcon": "RarityIconCenter_SSR.png",
+  "attributeIcon": "attr-Yellow.png",
+  "attributeName": "黄色",
+  "rarityLabel": "SSR",
+  "relations": {
+    "events": [
+      {
+        "id": 4,
+        "name": "A day～#HalloweenSnap～",
+        "role": "加成",
+        "cardBonuses": {
+          "scope": "活动 PT、本卡活动综合力",
+          "ranks": "卡牌 Rank 1 → 5",
+          "rows": [
+            {
+              "name": "合计",
+              "values": [
+                60,
+                70,
+                80,
+                90,
+                100
+              ]
+            },
+            {
+              "name": "其中专属",
+              "values": [
+                30,
+                35,
+                40,
+                45,
+                50
+              ]
+            }
+          ]
+        },
+        "banner": "event-4.png",
+        "targets": {
+          "attributes": [
+            {
+              "image": "attr-Blue.png",
+              "name": "绀碧"
+            },
+            {
+              "image": "attr-Green.png",
+              "name": "翡翠"
+            },
+            {
+              "image": "attr-Yellow.png",
+              "name": "琉金"
+            }
+          ],
+          "bands": [
+            {
+              "image": "band_Icon_mygo.png",
+              "name": "MyGO!!!!!"
+            },
+            {
+              "image": "band-2-emblem.png",
+              "name": "Ave Mujica"
+            }
+          ]
+        }
+      }
+    ],
+    "gachas": [
+      {
+        "id": 16,
+        "name": "晦冥的夜行者们招募",
+        "banner": "gacha-16.png"
+      },
+      {
+        "id": 17,
+        "name": "万圣节 SSR必得券招募",
+        "banner": "gacha-17.png"
+      },
+      {
+        "id": 18,
+        "name": "晦冥的夜行者们 期间限定SSR必得券招募",
+        "banner": "gacha-18.png"
+      }
+    ]
+  },
+  "bandId": 1,
+  "cultivation": {
+    "trainingStage": 5,
+    "trainingBonus": 10112,
+    "awakeningStage": 5,
+    "awakeningBonus": 10112,
+    "total": 121356,
+    "maxLevel": 90,
+    "stats": [
+      {
+        "key": "performance",
+        "initial": 12410,
+        "base": 30514,
+        "trainingBonus": 3051,
+        "awakeningBonus": 3051,
+        "full": 36616
+      },
+      {
+        "key": "technique",
+        "initial": 16310,
+        "base": 40104,
+        "trainingBonus": 4010,
+        "awakeningBonus": 4010,
+        "full": 48124
+      },
+      {
+        "key": "visual",
+        "initial": 12410,
+        "base": 30514,
+        "trainingBonus": 3051,
+        "awakeningBonus": 3051,
+        "full": 36616
+      }
+    ]
+  },
+  "jpDebutDate": "2026-10-28",
+  "characterId": 5,
+  "logo": "wordmark-1.png",
+  "emblem": "band_Icon_mygo.png"
+}

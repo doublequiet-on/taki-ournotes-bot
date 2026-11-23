@@ -1,0 +1,37 @@
+main.foldsheet[data-band-id="3"] .filter-panel {
+  & > h2.section::after { content: none; }
+
+  & > .skills {
+    position: relative;
+    isolation: isolate;
+  }
+
+  /* A single divider tracks the shared index width and the full list height. */
+  & > .skills::before {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    inset-block: 0;
+    left: calc(var(--index-width) - 2px);
+    width: 4px;
+    background: linear-gradient(90deg,
+      #c7c0c9 0 .7px, #ddd7de 1px, #ede9ed 2.5px, #fffdfbd9 3.2px);
+  }
+
+  & > .skills::after {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    pointer-events: none;
+    left: calc(var(--index-width) - 3px);
+    top: 50%;
+    width: 6px;
+    height: 1px;
+    border-radius: 1px;
+    transform: translateY(-50%);
+    background: #968b9c;
+    box-shadow: 0 -3px #968b9c, 0 3px #968b9c,
+                0 -2px #faf6fa, 0 1px #faf6fa, 0 4px #faf6fa;
+  }
+}

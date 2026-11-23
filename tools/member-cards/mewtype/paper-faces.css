@@ -1,0 +1,38 @@
+/* Low-chroma pearl stock, with cool gray only in the two folds. */
+body:has(main.foldsheet[data-band-id="3"]) {
+  background-color: #d8d7d5;
+}
+#print:has(main.foldsheet[data-band-id="3"]) {
+  background: linear-gradient(155deg, #e6e4e2, #d4d4d4);
+}
+.sheet-shadow:has(> main.foldsheet[data-band-id="3"]) {
+  filter: drop-shadow(0 2px 1.4px #494b4f59);
+}
+main.foldsheet[data-band-id="3"] > :is(.art-page, .lyric-page, .relation-page) {
+  background-color: #faf9f7;
+}
+main.foldsheet[data-band-id="3"] > .art-page {
+  background-image:
+    linear-gradient(to left, #53576060, #6b6f7838 2px, #82858a18 7px, transparent 18px),
+    radial-gradient(ellipse 120px 96px at 0 0, #e4cfe5 0%, #eddeecbf 31%, transparent 95%),
+    radial-gradient(ellipse 85px 86px at 0 100%, #ebdcea 0%, #f1e6efaa 40%, transparent 96%),
+    linear-gradient(140deg, #faf8f7, #fbfaf8 55%, #f6f5f3);
+}
+main.foldsheet[data-band-id="3"] > .lyric-page {
+  --right-crease: linear-gradient(transparent, transparent);
+  background-image:
+    linear-gradient(to right, #50555e61, #6c70773c 2px, #8a8d9022 6px, transparent 17px),
+    var(--right-crease),
+    linear-gradient(122deg, #faf9f7, #fdfcfa 53%, #f8f7f5);
+}
+main.foldsheet[data-band-id="3"]:has(> .relation-page) > .lyric-page {
+  --right-crease: linear-gradient(to left, #ffffff 0, #ffffffcc 1px, #ffffff55 4px, transparent 13px);
+}
+main.foldsheet[data-band-id="3"] > .relation-page {
+  background-image:
+    linear-gradient(to right, #555a604f, #6f747b32 2px, #878b9021 6px, #9295980d 13px, transparent 23px),
+    linear-gradient(116deg, #f4f3f1, #f9f8f6 33%, #faf9f7 74%, #f6f5f3);
+}
+/* The existing grain masks contain dots to the outer corners. */
+main.foldsheet[data-band-id="3"] > .art-page::before { color: #ab8ca755; }
+main.foldsheet[data-band-id="3"] > .relation-page::after { color: #a6a2a03d; }

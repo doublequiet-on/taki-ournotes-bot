@@ -1,0 +1,17 @@
+main.foldsheet[data-band-id="3"] {
+  & .host-corner { width:211px; max-width:100%; }
+  & .host-corner::before { content:none; }
+  & .host-corner .maru { width:211px; max-width:100%; filter:none; }
+  & .console-bank :is(.read-mid-low,.read-mid-high) :is(.rv,.rl) {
+    fill:#716674; font-weight:400;
+  }
+  & .console-bank .read-current .rv { fill:#42394c; }
+  & .master-axis .master-full-value {
+    fill:#392f42; font-weight:700; stroke:#392f42; stroke-width:.27; paint-order:stroke fill;
+  }
+  & .relations .web-window .bonus-table { table-layout:fixed; }
+  & .relations .web-window .bonus-table tr > :first-child { width:var(--row-label,54px); }
+  & .relations .web-window .bonus-table tr > :not(:first-child) { text-align:center; padding-inline:0; }
+  & .skills h3 .skill-family { display:inline-block; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+  & .lyric-page h1 .title-phrase { max-width:100%; display:inline-block; white-space:normal; overflow-wrap:anywhere; }
+}

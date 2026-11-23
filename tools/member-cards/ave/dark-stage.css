@@ -1,0 +1,120 @@
+/* Dark stage lighting for Ave Mujica's local programme. */
+.ave-stage {
+  background: radial-gradient(ellipse 73% 46% at 42% 108%,#91113492,transparent 86%),
+    radial-gradient(ellipse at 7% 6%,#811b4140,transparent 34%),
+    linear-gradient(110deg,#080817a8,#1809198c 40%,#090911c9 75%),url("velvet.jpg") center / cover;
+}
+.ave-stage::before { filter:brightness(.76) saturate(1.18) drop-shadow(2px 4px 4px #05040bcc); }
+.ave-stage::after { filter:brightness(.64) saturate(1.16) drop-shadow(2px 4px 4px #05040bcc); }
+.ave-apron { filter:brightness(.89) saturate(.86); }
+.ave-book {
+  /* A single pool of footlight spans all three folds of the programme. */
+  background:
+    radial-gradient(ellipse 31% 12% at 18% 100%,#ec6b642f,transparent 93%),
+    radial-gradient(ellipse 50% 48% at 24% 101%,#b7194e6e,transparent 85%),
+    linear-gradient(90deg,#21060d70,transparent 18%,transparent 65%,#23061083),
+    radial-gradient(ellipse 100% 108% at 38% 107%,
+      #a81440 0%,#991238 18%,#77112f 39%,#530e25 57%,
+      #350f1c 74%,#250d16 88%,#1c0a10 100%);
+  border-color:#69515e;
+  box-shadow:-1px -1px #846577,1px 2px #4a3844,2px 4px #201723,4px 10px 18px #05030acc;
+}
+.ave-border {border-color:#c2989863}
+.ave-fold {background:linear-gradient(90deg,transparent,#0a07102e 35%,#100c1566 54%,#0008 56%,#b39aa24a 58%,transparent 85%)}
+.ave-fold.ridge {background:linear-gradient(90deg,transparent,#ab92a01a 49%,#ceb2ba3d 55%,#100b16b3 58%,transparent)}
+.ave-print::before {opacity:.12}
+.ave-print::after {
+  opacity:.10; mix-blend-mode:soft-light;
+  background:radial-gradient(circle at 50% 50%,#ead6d6 .38px,transparent .65px) 0 0 / 2.4px 2.4px;
+  mask-image:linear-gradient(165deg,#000,transparent 53%,#0007);
+}
+.ave-book > main[data-band-id="2"] {
+  --text:#ede4e3; --heading:#f4e9e3; --secondary:#d9c7ce; --display:#f2d0c8; --value:#e5d8d9;
+  color:var(--text);
+}
+main[data-band-id="2"] h1 {color:#fae9dc}
+main[data-band-id="2"] :is(.section,.relations dt) {color:#f3d9cf}
+main[data-band-id="2"] .lyric-page header,
+main[data-band-id="2"] .relations dt {border-color:#966e7c80}
+main[data-band-id="2"] .ave-source .sequence {background:#c39aab0b;border-color:#a289943e}
+main[data-band-id="2"] .ave-source .level:last-child {color:#f6c8c9}
+main[data-band-id="2"] .relation-banner {box-shadow:0 0 0 .6px #b49b9e66,0 1px 3px #09070c99}
+.ave-member-dock .member-line strong {color:#f2e8e6}
+.ave-stage-name {color:#d4b6c0}
+.ave-member-instruments {
+  background:radial-gradient(ellipse at 52% 62%,#85657454,transparent 73%);
+}
+.ave-member-instruments [data-character-id] {filter:grayscale(.82) brightness(1.12);opacity:.74}
+.ave-member-instruments .current-instrument[data-character-id] {
+  opacity:1;
+  filter:drop-shadow(0 0 1.8px #eec287) drop-shadow(1px 2px 1px #120a10);
+}
+.stage-sections :is(.title,.row-label,.row-total,.value) {fill:#eee3df}
+.stage-sections .growth-count {fill:#c7b6bc}
+.stage-sections .headline {fill:#55243a}
+
+main[data-band-id="2"] .art-page > .ave-puppet-scene {
+  position:relative;
+  flex:1 0 112px;
+  container-type:size;
+  overflow:hidden;
+}
+.ave-puppet-scene > svg {
+  position:absolute;
+  top:66%;
+  left:50%;
+  width:min(100%, calc(100cqh * 500 / 438));
+  height:auto;
+  transform:translate(-50%, -66%);
+  overflow:visible;
+}
+
+main[data-band-id="2"] .lyric-page header:has(+ .section + .skills) {
+  padding-bottom:0;
+  border-bottom:0;
+}
+main[data-band-id="2"] .lyric-page .section:has(+ .skills) {
+  margin:20px 6px 10px 0;
+  gap:8px;
+  font-size:19px;
+  line-height:1.25;
+}
+main[data-band-id="2"] .lyric-page .section:has(+ .skills)::before {
+  content:"";
+  order:1;
+  flex:1;
+  height:1px;
+  align-self:center;
+  background:linear-gradient(90deg,#c39b6baf 0 6px,#b08b655e 6px,#a6856442 100%);
+}
+main[data-band-id="2"] .lyric-page .section .levels-label {
+  order:2;
+  font:normal 13px/1.2 Georgia,"Times New Roman",serif;
+  font-variant-numeric:lining-nums tabular-nums;
+  letter-spacing:.015em;
+  color:#e4cdb5;
+  white-space:nowrap;
+}
+main[data-band-id="2"] .lyric-page .skills {
+  gap:12px;
+  margin-inline:-4px;
+}
+main[data-band-id="2"] .lyric-page .skills > article {
+  position:relative;
+  margin:0;
+  padding:10px 9px;
+  border:1px solid;
+  border-color:#dfbc82 #996c47 #80583e #c49a69;
+  background:#411625 linear-gradient(105deg,
+    #3a101c 0%,#722b3c 7%,#551a2b 13%,#421221 26%,
+    #421421 63%,#562132 86%,#793346 95%,#521d2b);
+  box-shadow:inset 0 0 0 .9px #573628,inset 0 0 0 2px #caa370,
+    inset 0 0 0 2.8px #78543b,inset 0 0 5px 3px #160c1650,0 1px 2px #17081266;
+}
+main[data-band-id="2"] .lyric-page .skills > article::after {
+  content:"";
+  position:absolute;
+  inset:-4px;
+  background:url("skill-gilt.svg") center / 100% 100% no-repeat;
+  pointer-events:none;
+}
