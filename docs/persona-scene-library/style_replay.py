@@ -46,10 +46,17 @@ def capture(cases, profiles, story=None):
             with patch("time.time", return_value=1_795_348_800.0):
                 await super().asyncSetUp()
 
+        def request(self, msg, seq):
+            value = super().request(msg, seq)
+            if "names" in self.scene:
+                value["sender_name"] = self.scene["names"][self.current_user]
+            return value
+
         async def capture_turn(self):
             self.agent.context.clock = self.agent.store.clock = self.backend.clock
-            self.enable_lightweight_fact_fixture()
             mode = self.scene["mode"]
+            if mode != "ordinary_staged":
+                self.enable_lightweight_fact_fixture()
             profile = profiles["addressed" if mode == "addressed" else "proactive"]
             self.snapshot = replace(self.snapshot, profile=replace(self.snapshot.profile, **profile))
             self.agent.story = story
@@ -90,7 +97,7 @@ def capture(cases, profiles, story=None):
                     self.now += 1
                 self.tick += 1.6
                 plan, _, _ = await self.candidate(value)
-                self.assertEqual(bool(plan["parts"]), mode == "staged", plan)
+                self.assertEqual(bool(plan["parts"]), mode in ("staged", "ordinary_staged"), plan)
 
     styles = dict(zip(VARIANTS, (base_style(), chat_agent.REPLY_STYLE)))
     assert styles["baseline"] != styles["revised"]
@@ -112,7 +119,8 @@ def capture(cases, profiles, story=None):
 
 
 def verify(cases, captured, styles, profiles, approved_prompt=None):
-    phases = {"addressed": ["addressed"], "one_pass": ["combined"], "staged": ["decision", "generation"]}
+    phases = {"addressed": ["addressed"], "one_pass": ["combined"],
+              "staged": ["decision", "generation"], "ordinary_staged": ["decision", "generation"]}
     for scene, turn in zip(cases, captured, strict=True):
         assert scene["id"] == turn["id"]
         baseline, revised = (turn["wires"][variant] for variant in VARIANTS)
@@ -126,12 +134,18 @@ def verify(cases, captured, styles, profiles, approved_prompt=None):
             output_cap = {"decision": 768, "generation": 1024, "combined": 1024}.get(
                 before["phase"], profile["max_output_tokens"],
             )
+            if scene["mode"] == "ordinary_staged":
+                output_cap = profile["max_output_tokens"]
             assert body["max_output_tokens"] == min(profile["max_output_tokens"], output_cap)
             if approved_prompt is not None:
                 assert "人工批准人格档案：\n" + approved_prompt in body["input"][0]["content"]
             message_rows = [json.loads(row["content"]) for row in body["input"] if row["role"] in ("user", "assistant")]
             assert [(row.get("speaker_id") if row["role"] == "user" else "Taki", row["text"])
                     for row in message_rows] == [tuple(pair) for pair in scene["messages"]], (scene["id"], message_rows)
+            if "names" in scene:
+                assert [row["display_name"] for row in message_rows] == [
+                    scene["names"][speaker] for speaker, _ in scene["messages"]
+                ]
             normalized = deepcopy(after)
             if before["phase"] != "decision":
                 prompt = normalized["body"]["input"][0]["content"]
@@ -263,6 +277,7 @@ def main():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=10, choices=range(1, 11))
+    parser.add_argument("--proactive-timing", action="store_true", help="capture ordinary proactive decisions and replies offline")
     parser.add_argument("--send", action="store_true", help="only after explicit model-call authorization")
     parser.add_argument("--runtime-snapshot", type=Path)
     parser.add_argument("--story-root", type=Path)
@@ -270,6 +285,8 @@ def main():
     parser.add_argument("--output-usd-per-million", type=Decimal)
     parser.add_argument("--budget-usd", type=Decimal)
     args = parser.parse_args()
+    if args.proactive_timing and (args.runtime_snapshot or args.send):
+        parser.error("--proactive-timing captures the two stages locally; the send option supports one-pass proactive chat")
     rates = (args.input_usd_per_million, args.output_usd_per_million, args.budget_usd)
     key = os.environ.get("OPENAI_API_KEY") if args.send else None
     if args.send and (not args.runtime_snapshot or not key or
@@ -277,7 +294,7 @@ def main():
         parser.error("--send requires a verified runtime snapshot, configured key, verified rates and a budget")
     if args.story_root and not args.runtime_snapshot:
         parser.error("--story-root requires --runtime-snapshot")
-    cases = read(HERE / "style-turns.json")
+    cases = read(HERE / ("proactive-timing-turns.json" if args.proactive_timing else "style-turns.json"))
     profiles = dict.fromkeys(("addressed", "proactive"), FIXTURE_PROFILE)
     story = approved_prompt = None
     if args.runtime_snapshot:
@@ -286,7 +303,10 @@ def main():
         cases = [{**scene, "mode": "one_pass"} if scene["mode"] == "staged" else scene for scene in cases]
     captured, styles = capture(cases, profiles, story)
     verify(cases, captured, styles, profiles, approved_prompt)
-    jobs = plan(captured, args.limit)
+    if args.proactive_timing:
+        jobs = [row for turn in captured[:args.limit] for wire in turn["wires"].values() for row in wire]
+    else:
+        jobs = plan(captured, args.limit)
     maximum_input = sum(job["input_limit"] for job in jobs)
     maximum_output = sum(job["body"]["max_output_tokens"] for job in jobs)
     upper = None

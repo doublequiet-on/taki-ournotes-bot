@@ -75,3 +75,7 @@ python -X utf8 -B docs/persona-scene-library/style_replay.py --out ../style-pair
 ```
 
 样卷只显示原对话、评审观察点和逐题随机分配的 A／B。主动接话的完全复读按运行时的规则显示为静默。模型试图调用工具的结果记在尝试记录，待比较的样卷只包含 A、B 都有可读结果的题。评审可以选 A、B、并列或都不合适，并写一条理由。发放时只给 `盲评样卷.md`。回收后用 `blind-mapping.json` 解盲，按题记录偏好差异与丢失的样本。看清静默判定、明确请求覆盖和多人话题是否退步，再据正文偏好判断是否采用新版。
+
+## 主动接话时机回放
+
+[主动时机合成题](proactive-timing-turns.json)覆盖应静默、等补充和适合接话的三类未点名群聊。离线运行 `python -X utf8 -B docs/persona-scene-library/style_replay.py --proactive-timing --out ../proactive-timing-wire`。每题捕获普通主动参与的判断和正文请求，核对发言者、消息顺序，验证两版口吻的判断请求一致。夹具选择参与来抵达正文阶段。真实模型的静默判断与正文质量见[本轮模型回放](MODEL_COMPARISON.md)。
