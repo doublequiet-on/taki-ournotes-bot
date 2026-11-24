@@ -6850,6 +6850,32 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('声优表演方面和唱歌方面',messages[2]['content'])
         self.assertEqual(result['parts'],[])
 
+    async def test_busy_named_turn_preserves_previous_exchange_for_same_user_followup(self):
+        from ournotes_bot.application.backend_protocol import ProtocolError
+
+        self.client.request.return_value=self.result('竞技场兑换的拨片能不能继承，我还不知道。')
+        initial,_=await self.prepare_native('/聊 激奏 arena 的拨片会继承吗')
+        self.event(initial,'intent');self.event(initial,'ack')
+        self.current_user='u2'
+        self.now+=1
+        with patch.object(self.backend.model_runtime,'attempt',side_effect=ProtocolError('chat_hermes_busy',503)):
+            failed,_=await self.prepare_native('/聊 查查拨片会不会过期',seq=2)
+        self.assertEqual(failed['parts'][0]['business_status'],'chat_hermes_busy')
+        self.event(failed,'intent');self.event(failed,'ack')
+
+        self.now+=1
+        value=self.observation('唉',seq=3)
+        self.tick+=1.6
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value=self.result('{"participation":"skip","text":""}')
+        await self.candidate(value,3)
+        history=[json.loads(m['content']) for m in bodies[0]['messages'][1:]]
+        self.assertEqual([row['role'] for row in history],['user','assistant','user','assistant','user'])
+        self.assertIn('激奏 arena',history[0]['text'])
+        self.assertEqual(history[1]['reply_to'],history[0]['message_id'])
+        self.assertIn('会不会过期',history[2]['text'])
+        self.assertEqual(history[-1]['text'],'唉')
+
     async def test_short_card_name_answers_confirmed_question_without_mention(self):
         self.client.request.return_value=self.result('你说的是哪张卡？')
         plan,_=await self.prepare_native('/聊 这张卡的技能怎么触发')

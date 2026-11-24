@@ -1634,6 +1634,12 @@ class ChatAgent:
                 content=json.dumps(data,ensure_ascii=False)
             context.append({'role':message['role'],'content':content})
         if work.proactive is None and retain_turn:
+            # Only keep IDs of the adjacent ACKed exchange actually fitted for this named turn.
+            if len(context)>=3 and [m['role'] for m in context[-3:]]==['user','assistant','user']:
+                before,answer,current=(json.loads(m['content']) for m in context[-3:])
+                if (before.get('message_id') and answer.get('message_id') and
+                        answer.get('reply_to')==before['message_id'] and current.get('message_id')==request.message_id):
+                    work.prior_exchange_ids=(before['message_id'],answer['message_id'])
             self.audit(self.store.begin,work,context)
             self.bind_memory(work,[json.loads(item['content']) for item in context if 'message_id' in json.loads(item['content'])])
             self.audit(self.store.bind_sources,work.delivery,work.request.scope,list(work.memory_sources))

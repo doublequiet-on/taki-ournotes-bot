@@ -18,6 +18,47 @@ TOKEN = 'x' * 32
 
 
 class CompactStandbyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_named_claim_after_tool_uses_remaining_deadline(self):
+        from time import monotonic
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock, patch
+        from ournotes_bot.application.hermes_chat import Run
+        from ournotes_bot.application.hermes_standby import StandbyLane
+
+        def worker(result):
+            return SimpleNamespace(alive=True, write=AsyncMock(), close=AsyncMock(),
+                                   wait=AsyncMock(return_value=result))
+        ready = asyncio.Event()
+        first, second = worker('tool call'), worker('answer')
+        async def prepare():
+            await ready.wait()
+            return second
+
+        lane = StandbyLane(prepare, 1, compact=True)
+        lane.ready.append(first)
+        lane.start()
+        owner = SimpleNamespace(dialogue=lane, cleanup_failed=False)
+        work = SimpleNamespace(proactive=None, continuation=False, ended=asyncio.Event(),
+                               hermes_provider_started=False)
+        run = Run(work, Mock())
+        deadline = monotonic() + 10
+        profile = SimpleNamespace(model='fixture')
+        try:
+            with patch.object(lane,'claim',wraps=lane.claim) as claim:
+                result = await HermesChat.pilot_worker(owner,run,'first',profile,{},deadline,None)
+                self.assertEqual(result,'tool call')
+                self.assertLessEqual(claim.await_args.args[0],monotonic()+2)
+                work.hermes_provider_started = True
+                asyncio.get_running_loop().call_later(2.1,ready.set)
+                result = await HermesChat.pilot_worker(owner,run,'next',profile,{},deadline,None)
+                claim.assert_awaited_with(deadline,priority=0,wait=True)
+                self.assertEqual(result,'answer')
+            first.write.assert_awaited_once()
+            second.write.assert_awaited_once()
+        finally:
+            ready.set()
+            await lane.stop()
+
     async def test_replenish_after_active_worker_exits(self):
         from unittest.mock import AsyncMock, Mock
         from ournotes_bot.application.hermes_standby import StandbyLane

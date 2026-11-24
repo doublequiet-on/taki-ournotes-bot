@@ -305,7 +305,8 @@ class HermesChat:
         proactive = work.proactive is not None and not work.continuation
         lane = self.proactive if proactive else self.dialogue
         named = work.proactive is None
-        limit = min(deadline, monotonic()+2) if named else deadline
+        first_named_step = named and not work.hermes_provider_started
+        limit = min(deadline, monotonic()+2) if first_named_step else deadline
         # A compact lane refills only after releasing the decision worker.
         # Give an admitted follow-on step its remaining execution window.
         wait = not proactive or (lane.compact and work.hermes_provider_started)
