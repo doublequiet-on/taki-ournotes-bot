@@ -351,17 +351,20 @@ class Backend:
             require(0 <= age < WINDOW, 'message_expired', 409)
             require(len(self.works) < self.plan_capacity, 'plan_capacity', 503)
             require(self.retained_bytes() < self.byte_capacity, 'byte_capacity', 503)
-            command_body = replies.command_text(request.body)
+            personal = self.query_runtime is None
+            command_body = replies.command_text(request.body) if personal else request.body
             commands = split_commands(command_body)
             chat=bool(getattr(self.settings,'chat_engine','legacy')=='agent' and self.model_runtime and (self.model_runtime.is_chat(request.body)
                       or not request.body.strip() and request.attachments or proactive is not None)
                       and (proactive is not None or parse_operation(command_body) is None))
             lines=request.body.strip().splitlines()
-            mixed_modes=bool(any(replies.explicit_chat(line) for line in lines) and
-                             any(replies.recognizes_message(line) and not replies.explicit_chat(line) for line in lines))
+            explicit_lines=[replies.explicit_chat(line,allow_leading_mentions=personal) for line in lines]
+            mixed_modes=any(explicit_lines) and any(not explicit and
+                replies.recognizes_message(line,allow_leading_mentions=personal)
+                for line,explicit in zip(lines,explicit_lines))
             if chat or mixed_modes:
                 commands=[request.body or '[图片]']
-            elif re.match(r'^[/／]?查(?:\s|$)', command_body):
+            elif re.match(r'^[/／]?查(?:\s|$)', command_body.strip()):
                 commands=[command_body]
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
@@ -427,7 +430,7 @@ class Backend:
     async def prepare_command(self, work, content):
         if getattr(work,'mixed_modes',False):
             return replies.PreparedReply("查询和聊天请分开发送",business_status="invalid_argument")
-        if replies.explicit_chat(content) and not work.chat:
+        if replies.explicit_chat(content,allow_leading_mentions=self.query_runtime is None) and not work.chat:
             return replies.PreparedReply("聊天功能尚未启用，请使用 /查 查询资料。")
         if work.chat:
             content=await self.model_runtime.agent.proactive.coalesce_addressed(work,content)
@@ -1003,10 +1006,12 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
         require(isinstance(value, dict) and set(value) == {'body'} and isinstance(value['body'], str), 'classify_shape')
         require(len(value['body'].encode()) <= 16384, 'body_size')
         body = value['body']
+        personal = backend.query_runtime is None
+        command_body = replies.command_text(body) if personal else body
         chat = bool(backend.model_runtime and backend.model_runtime.is_chat(body))
         return json({'direct_chat': bool(getattr(backend.settings,'chat_engine','legacy')=='agent' and
-            (replies.explicit_chat(body) or replies.named_chat(body))),
-            'recognized': replies.recognizes_message(replies.command_text(body)) or chat,
+            (replies.explicit_chat(body,allow_leading_mentions=personal) or personal and replies.named_chat(body))),
+            'recognized': replies.recognizes_message(command_body,allow_leading_mentions=personal) or chat,
             **({'chat': chat} if 'qq-msg-idx-v1' in backend.reference_profiles else {})})
     async def retire(request):
         value = await read_json(request)

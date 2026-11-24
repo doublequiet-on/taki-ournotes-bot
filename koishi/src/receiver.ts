@@ -388,7 +388,9 @@ export class Receiver {
       await previous
       if (!this.active) { this.observed('disposed'); return true }
       if (source.conflict) { this.observed('conflict'); return true }
-      const decoded = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true,true)
+      const queryLocal = this.client.readiness?.execution_profile === 'query-local-v1'
+      const decoded = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true,true,
+        !queryLocal)
       if (decoded.status !== 'accepted') { this.observed(decoded.status === 'ignored' ? 'decode_ignored' : 'decode_rejected'); return false }
       input=decoded.inbound
       if(this.config.management?.inScope && !this.config.management.inScope(input)){this.observed('management_denied');return false}
@@ -397,8 +399,13 @@ export class Receiver {
       if (!this.ctx.filter(canonical)) { this.observed('scope_denied'); return false }
       await this.ready
       if (!this.active) { this.observed('disposed'); return true }
-      if (decoded.inbound.trigger!=='observation' && (!decoded.inbound.attachments?.length || /^[/／]/u.test(decoded.inbound.body))
-          && !await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
+      if (!queryLocal && this.client.readiness?.execution_profile === 'query-local-v1' && input.trigger !== 'observation') {
+        const legacy = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true,true,false)
+        if (legacy.status !== 'accepted') { this.observed(legacy.status === 'ignored' ? 'decode_ignored' : 'decode_rejected'); return false }
+        input=legacy.inbound
+      }
+      if (input.trigger!=='observation' && (!input.attachments?.length || /^[/／]/u.test(input.body))
+          && !await this.client.recognizes(input.body)) { this.observed('unrecognized'); return false }
       const directChat = input.trigger==='observation' && await this.client.directChat(input.body)
       if(directChat) input={...input,trigger:'command'}
       if (!this.active) { this.observed('disposed'); return true }

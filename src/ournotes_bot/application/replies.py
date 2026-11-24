@@ -50,8 +50,10 @@ def chat_command(content: str) -> str | None:
     return None
 
 
-def explicit_chat(content: str) -> bool:
-    return chat_command(content) is not None
+def explicit_chat(content: str, *, allow_leading_mentions: bool = True) -> bool:
+    if allow_leading_mentions:
+        return chat_command(content) is not None
+    return bool(re.match(r'^[/／]聊(?:\s|$)', content.strip()))
 
 
 def named_chat(content: str) -> bool:
@@ -84,12 +86,12 @@ def command_kind(content: str) -> str:
             '查活动': 'event', '一图流': 'event'}.get(head, 'other')
 
 
-def recognizes_message(content: str) -> bool:
+def recognizes_message(content: str, *, allow_leading_mentions: bool = True) -> bool:
     """Read-only entry recognition; no repository, model, quota or context access."""
     from ..commands import ALIASES, UNAVAILABLE_COMMANDS
     specials = {"介绍", "about", "简介", "帮助", "help", "菜单", "指令", "ヘルプ",
                 "语言", "language", "言語", "调试数据", "数据状态", "状态", "版本", "status", "状態"}
-    if explicit_chat(content):
+    if explicit_chat(content, allow_leading_mentions=allow_leading_mentions):
         return True
     for text in split_commands(content):
         head = text.split(None, 1)[0].casefold()

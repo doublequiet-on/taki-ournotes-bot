@@ -60,6 +60,10 @@ class Diagnostics:
                     id INTEGER PRIMARY KEY, request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
                     kind TEXT NOT NULL, data TEXT NOT NULL, observed_at REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS diagnostic_chat_request ON chat_events(request_id);
+                CREATE TABLE IF NOT EXISTS provider_chat_events(
+                    id INTEGER PRIMARY KEY, request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+                    after_event_id INTEGER NOT NULL, data TEXT NOT NULL, observed_at REAL NOT NULL);
+                CREATE INDEX IF NOT EXISTS diagnostic_provider_request ON provider_chat_events(request_id);
                 CREATE TABLE IF NOT EXISTS conversation_events(
                     id INTEGER PRIMARY KEY, request_id TEXT NOT NULL, group_id TEXT NOT NULL,
                     kind TEXT NOT NULL, data TEXT NOT NULL, observed_at REAL NOT NULL);
@@ -225,18 +229,27 @@ class Diagnostics:
         """Bounded operational metadata; never accepts dialogue, URLs or tool arguments."""
         def save(db):
             payload=self.chat_metadata(kind,data)
-            detail_only = kind == 'provider_chat'
-            count = db.execute('SELECT count(*) FROM chat_events WHERE request_id=? AND (kind=?)=?',
-                               (request_id, 'provider_chat', detail_only)).fetchone()[0]
-            if count >= (6 if detail_only else 32):
+            if kind == 'provider_chat':
+                if db.execute('SELECT count(*) FROM provider_chat_events WHERE request_id=?',(request_id,)).fetchone()[0]>=6:
+                    self.dropped+=1
+                    return
+                db.execute('''INSERT INTO provider_chat_events(request_id,after_event_id,data,observed_at)
+                    SELECT ?,COALESCE(MAX(id),0),?,? FROM chat_events WHERE request_id=?''',
+                    (request_id,payload,now,request_id))
+                return
+            event_id = None
+            if db.execute('SELECT count(*) FROM chat_events WHERE request_id=?',(request_id,)).fetchone()[0]>=32:
                 self.dropped+=1
-                # Extra evidence must not displace events the original stream could retain.
-                if detail_only or kind in ('evidence','attempt_timing','reply_ready') or not db.execute('''DELETE FROM chat_events WHERE id=(
+                if kind in ('evidence','attempt_timing','reply_ready'):
+                    return
+                # Replacing the newest row must not reuse a provider detail's ordering anchor.
+                event_id = db.execute('SELECT COALESCE(MAX(id),0)+1 FROM chat_events').fetchone()[0]
+                if not db.execute('''DELETE FROM chat_events WHERE id=(
                         SELECT id FROM chat_events WHERE request_id=? AND kind IN ('evidence','attempt_timing','reply_ready')
                         ORDER BY CASE WHEN kind='evidence' THEN 1 ELSE 0 END,id LIMIT 1)''',(request_id,)).rowcount:
                     return
-            db.execute('INSERT INTO chat_events(request_id,kind,data,observed_at) VALUES(?,?,?,?)',
-                       (request_id,kind,payload,now))
+            db.execute('INSERT INTO chat_events(id,request_id,kind,data,observed_at) VALUES(?,?,?,?,?)',
+                       (event_id,request_id,kind,payload,now))
         return self.write(save)
 
     def conversation_event(self, request_id, group_id, kind, now, **data):
@@ -334,7 +347,11 @@ class Diagnostics:
                 '''SELECT kind,position,attempt,duration_ms,observed_at,COALESCE(outcome,'unknown') AS outcome
                    FROM spans LEFT JOIN span_results USING(event_id) WHERE request_id=? ORDER BY observed_at,event_id''', (request_id,))]
             result['chat_events'] = [dict(kind=s['kind'],data=json.loads(s['data']),observed_at=s['observed_at'])
-                for s in self.db.execute('SELECT kind,data,observed_at FROM chat_events WHERE request_id=? ORDER BY id',(request_id,))]
+                for s in self.db.execute('''SELECT kind,data,observed_at FROM (
+                    SELECT kind,data,observed_at,id AS event_order,0 AS detail_order FROM chat_events WHERE request_id=?
+                    UNION ALL
+                    SELECT 'provider_chat',data,observed_at,after_event_id,id FROM provider_chat_events WHERE request_id=?
+                    ) ORDER BY event_order,detail_order''',(request_id,request_id))]
             result['last_chat_events'] = {e['kind']: e['data'] for e in result['chat_events']
                                           if e['kind'] in _CHAT_OUTCOME_EVENTS}
             return result
