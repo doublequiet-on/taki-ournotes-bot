@@ -7491,9 +7491,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.client.request.return_value=self.result('我在听。')
         direct,_=await self.prepare_native('/聊 在吗',seq=2)
         self.assertNotIn('这是未点名的群聊观察',bodies[-1]['messages'][0]['content'])
-        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS
+        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS, NAMED_REPLY_STYLE
         self.assertIn(CHAT_SEMANTICS,bodies[-1]['messages'][0]['content'])
-        self.assertIn('根据已有结果回答',bodies[-1]['messages'][-1]['content'])
+        self.assertEqual(bodies[-1]['messages'][-1]['content'],'本轮不再调用工具。'+NAMED_REPLY_STYLE)
         self.assertEqual(direct['parts'][0]['text'],'我在听')
         self.event(direct,'intent');self.event(direct,'ack')
 
