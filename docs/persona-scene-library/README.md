@@ -45,3 +45,37 @@
 用新的输出目录运行 `python -X utf8 -B docs/persona-scene-library/replay.py --public-proxy --out <输出目录>`。通过已有环境变量提供 API 密钥。此入口只使用公开角色资料独立撰写的提示和本目录原创题、范例，由 gpt-6.1-terra medium 写正文，gpt-6-astra low 匿名打分。固定同一题的上下文，其余各组仅改变是否及如何注入范例。采样一次，逐题随机候选牌面。盲评样卷可直接交给群友评阅，发放时只给样卷。 [公开角色资料](https://anime.bang-dream.com/mygo/character/taki/)
 
 输出包含固定输入与脚本的指纹、API 请求摘要账、提供方用量、盲评样卷和独立牌面对照。发放样卷前保留映射用于回收，汇总以三列齐全且已判分的题为准。`<TAKI_SKIP>` 与普通文字都交评审判断。整体统计含静默题，评估正文时另看非群梗题中的应答场景，避免静默通过抬高口吻均值。
+
+## 同链路口吻对照
+
+[合成群聊](style-turns.json) 的十题覆盖吐槽、疲惫、报喜、玩笑、明确请求建议与总结、详细讨论、纠错、多人接话和静默。新版把日常回应落到眼前的一点，允许轻微回嘴、关心和祝贺，撤掉固定接话示例。明确请求建议、总结或详细说明时按请求给内容。
+
+[回放](style_replay.py) 用现有聊天后端测试夹具和仓库的带版本别名表，在本地 provider 边界捕获 JSON。相同的测试配置、合成时间、群友文字和历史送达回执各跑一遍。基线段来自 `2cfaa7087b60e067066250862195c276a5e7bec6`，另一组使用工作区的口吻段。两组共用工作区的其他代码和提示。两阶段主动聊天分别检查决策与正文，决策请求须逐字段相同。一阶段主动聊天的请求同时包含参与判断和正文。捕获使用仓库默认人格；生产批准档案、真实聊天、模型输出、QQ 送达均未参与。
+
+以安装了项目依赖的 Python 在 checkout 根目录执行，输出目录使用尚不存在的路径。
+
+```powershell
+python -X utf8 -B docs/persona-scene-library/style_replay.py --out ../style-wire
+```
+
+`wire.json` 保存完整合成请求，`manifest.json` 记录题数、请求数和 token 上限。夹具回复只驱动分支。S04 的正文样本固定在决策已选参与的前提，观察正文；S10 在一阶段路径检验是否静默。
+
+无快照的离线配置使用夹具指定的 `gpt-6.1-terra` medium，以及点名与主动聊天各自的上限。付费回放需要真实运行快照，确认当前使用的是指定基线的 Agent 入口和一阶段主动聊天，两个入口实际选择的都是官方 OpenAI Responses 端点。提交给脚本的是经过操作者核对的非密钥 JSON，字段如下。
+
+- `runtime_revision` 是实际运行的完整提交，`chat_engine` 是 `agent`，`proactive_mode` 是 `one_pass`。
+- `profiles.addressed` 和 `profiles.proactive` 分别记录两个入口实际选到的配置。每项包含 `provider`、`wire_profile`、`model`、`reasoning_effort`、`max_input_tokens` 和 `max_output_tokens`。应按使用的账户、群配置、主备路由和主动专用配置核对，确保两次对照使用同一配置。
+- `approved_persona` 记录实际人格的 `persona_sha256`、`source_revision` 和 `revocation_revision`。用 `--story-root` 指向经授权用于本次外发的隔离档案副本，脚本先验证本地批准状态和版本，再检查批准原文进入请求。只有确认实际运行回退到仓库默认人格的情况，这项才填 `null`，并省略 `--story-root`。
+
+有快照时可先省略 `--send` 总检。S04 随实际一阶段模式构造，S10 仍考核静默。当前还没有经核对的实际选模、参数和人格材料。若实际端点、部署版本或阶段不同，需要按真实入口补齐回放构造。
+
+明确授权后核对账户额度、固定模型价格和预算，通过环境提供实验账户的 API 密钥。先用 `--limit 2` 做四次请求的短跑，正跑用 `--limit 10`，共二十次。程序按两种口吻的请求上限、各入口实际配置及无缓存单价核对预算。两入口单价不同时以两者的较高值准备预算。程序串行发送，遇提供方错误停止，不自动重试。返回工具调用时保留失败样本，不执行工具。
+
+```powershell
+python -X utf8 -B docs/persona-scene-library/style_replay.py --out ../style-pairs --limit 2 --runtime-snapshot $styleRuntimeSnapshot --story-root $styleIsolatedStoryRoot --send --input-usd-per-million $styleInputRate --output-usd-per-million $styleOutputRate --budget-usd $styleBudget
+```
+
+样卷只显示原对话、评审观察点和逐题随机分配的 A／B。主动接话的完全复读按运行时的规则显示为静默。模型试图调用工具的结果记在尝试记录，待比较的样卷只包含 A、B 都有可读结果的题。评审可以选 A、B、并列或都不合适，并写一条理由。发放时只给 `盲评样卷.md`。回收后用 `blind-mapping.json` 解盲，按题记录偏好差异与丢失的样本。看清静默判定、明确请求覆盖和多人话题是否退步，再据正文偏好判断是否采用新版。
+
+## 主动接话时机回放
+
+[主动时机合成题](proactive-timing-turns.json)覆盖应静默、等补充和适合接话的三类未点名群聊。离线运行 `python -X utf8 -B docs/persona-scene-library/style_replay.py --proactive-timing --out ../proactive-timing-wire`。每题捕获普通主动参与的判断和正文请求，核对发言者、消息顺序，验证两版口吻的判断请求一致。夹具选择参与来抵达正文阶段。真实模型的静默判断与正文质量见[本轮模型回放](MODEL_COMPARISON.md)。
