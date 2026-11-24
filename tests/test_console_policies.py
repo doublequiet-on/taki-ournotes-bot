@@ -3448,6 +3448,19 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
     async def test_named_reply_style_preserves_a_request_at_its_input_limit(self):
         await self.check_named_reply_style(closing='quota',tight_input=True)
 
+    async def test_named_reply_keeps_original_closing_without_a_final_reservation(self):
+        from ournotes_bot.application.chat_agent import NAMED_REPLY_STYLE
+
+        runtime=self.backend.model_runtime
+        runtime.agent.budget=replace(runtime.agent.budget,model_calls=1)
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('接住了')
+        plan,_=await self.prepare_native('/聊 今天好累')
+        self.assertTrue(plan['send_allowed'])
+        [body]=bodies
+        self.assertIn('本轮检索预算结束',body['messages'][-1]['content'])
+        self.assertNotIn(NAMED_REPLY_STYLE,body['messages'][-1]['content'])
+
     async def test_chat_can_ask_for_necessary_clarification(self):
         bodies=self.capture_native_bodies()
         self.client.request.return_value=self.result('你说的是哪首歌？')
@@ -7491,9 +7504,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.client.request.return_value=self.result('我在听。')
         direct,_=await self.prepare_native('/聊 在吗',seq=2)
         self.assertNotIn('这是未点名的群聊观察',bodies[-1]['messages'][0]['content'])
-        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS, NAMED_REPLY_STYLE
+        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS
         self.assertIn(CHAT_SEMANTICS,bodies[-1]['messages'][0]['content'])
-        self.assertEqual(bodies[-1]['messages'][-1]['content'],'本轮不再调用工具。'+NAMED_REPLY_STYLE)
+        self.assertIn('本轮检索预算结束',bodies[-1]['messages'][-1]['content'])
         self.assertEqual(direct['parts'][0]['text'],'我在听')
         self.event(direct,'intent');self.event(direct,'ack')
 

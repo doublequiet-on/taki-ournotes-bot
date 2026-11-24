@@ -1628,8 +1628,9 @@ class ChatAgent:
         named_text_reply = explicit_text and not (route or mechanic or has_quote or quote_prefix or scope_note)
 
         def reply_closing(closing):
-            if (not named_text_reply or operations or work.chat_task.goal
-                    or any(message.get('images') for message in messages)):
+            if (not named_text_reply or final_attempt is None or operations or work.chat_task.goal
+                    or any(message.get('images') or message.get('tool_calls') or message['role']=='tool'
+                           for message in messages)):
                 return closing
             style = '本轮不再调用工具。' + NAMED_REPLY_STYLE
             styled = [*messages, {'role':'system','content':style}]
