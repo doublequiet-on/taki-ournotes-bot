@@ -3413,6 +3413,73 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'][0]['text'],'我喜欢鼓点清楚的音乐')
         self.event(plan,'intent');self.event(plan,'ack')
 
+    async def check_named_reply_style(self, *, closing=None, tight_input=False):
+        from ournotes_bot.application.chat_agent import NAMED_REPLY_STYLE
+        from ournotes_bot.domain.model_calls import ModelError
+
+        profile=replace(self.snapshot.profile,provider='openai',model='gpt-6.2-sol',
+            wire_profile='openai-responses-v1',reasoning_effort='medium',
+            max_output_tokens=8192,user_daily_limit=10**8,group_daily_limit=10**8)
+        self.snapshot=replace(self.snapshot,profile=profile)
+        runtime=self.backend.model_runtime
+        if closing=='last_attempt':
+            runtime.agent.budget=replace(runtime.agent.budget,model_calls=1)
+        reserve,input_bound=runtime.reserve,runtime.input_bound
+        bodies=[]
+
+        def reserve_attempt(work,attempt,user,group,bound,**options):
+            if closing=='quota' and bound<profile.max_input_tokens:
+                raise ModelError('quota_exceeded')
+            return reserve(work,attempt,user,group,bound,**options)
+
+        def bound_attempt(work,messages,tools,**options):
+            if tight_input and any(m['role']=='system' and NAMED_REPLY_STYLE in m['content'] for m in messages):
+                return profile.max_input_tokens+1
+            return input_bound(work,messages,tools,**options)
+
+        async def respond(_,body,**options):
+            bodies.append(json.loads(json.dumps(body)))
+            return self.result('倒是挺会挑地方')
+
+        self.client.request.side_effect=respond
+        with patch.object(runtime,'reserve',side_effect=reserve_attempt), patch.object(
+                runtime,'input_bound',side_effect=bound_attempt):
+            plan,_=await self.prepare_native('/聊 我就想吐槽一句，这纸到底贴给谁看的')
+        self.assertTrue(plan['send_allowed'])
+        [body]=bodies
+        self.assertEqual(bool(body.get('tools')),not closing)
+        styles=[m for m in body['input'] if m['role']=='developer' and NAMED_REPLY_STYLE in m['content']]
+        if tight_input or not closing:
+            self.assertEqual(styles,[])
+        else:
+            self.assertEqual(styles,[{'role':'developer','content':'本轮不再调用工具。'+NAMED_REPLY_STYLE}])
+            self.assertEqual(body['input'][-1],styles[0])
+
+    async def test_named_reply_style_preserves_the_tool_enabled_first_request(self):
+        await self.check_named_reply_style()
+
+    async def test_named_reply_style_replaces_the_generic_quota_closing(self):
+        await self.check_named_reply_style(closing='quota')
+
+    async def test_named_reply_style_reaches_the_final_attempt(self):
+        await self.check_named_reply_style(closing='last_attempt')
+
+    async def test_named_reply_style_preserves_a_request_at_its_input_limit(self):
+        await self.check_named_reply_style(closing='quota',tight_input=True)
+
+    async def test_named_reply_keeps_original_closing_without_a_final_reservation(self):
+        from ournotes_bot.application.chat_agent import NAMED_REPLY_STYLE
+
+        runtime=self.backend.model_runtime
+        runtime.agent.budget=replace(runtime.agent.budget,model_calls=1)
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('接住了')
+        plan,_=await self.prepare_native('/聊 今天好累')
+        self.assertTrue(plan['send_allowed'])
+        [body]=bodies
+        self.assertIn('本轮检索预算结束',body['messages'][-1]['content'])
+        self.assertNotIn(NAMED_REPLY_STYLE,body['messages'][-1]['content'])
+
     async def test_chat_can_ask_for_necessary_clarification(self):
         bodies=self.capture_native_bodies()
         self.client.request.return_value=self.result('你说的是哪首歌？')
@@ -5776,6 +5843,33 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('等于四',plan['parts'][0]['text'])
         self.event(plan,'intent');self.event(plan,'ack')
 
+    async def test_named_reply_style_preserves_the_closing_after_reading_an_image(self):
+        from ournotes_bot.application.chat_agent import NAMED_REPLY_STYLE
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        self.client.request.return_value=self.result('这张照片我看到了')
+        origin,_=await self.prepare_native('/聊 这张照片先放在这里')
+        self.event(origin,'intent');self.event(origin,'ack')
+        self.attachments=[]
+        agent=self.backend.model_runtime.agent
+        agent.budget=replace(agent.budget,model_calls=2)
+        self.snapshot=replace(self.snapshot,profile=replace(
+            self.snapshot.profile,user_daily_limit=10**8,group_daily_limit=10**8))
+        bodies=self.capture_native_bodies()
+        self.client.request.side_effect=[
+            self.result(calls=(ToolCall('read','image_read','{"message_id":"native1"}'),)),
+            self.result('墙上的字看不清'),
+        ]
+        plan,attempts=await self.prepare_native('/聊 再看上一张照片，墙上写了什么',seq=2)
+        self.assertTrue(plan['send_allowed'])
+        self.assertEqual(len(attempts),2)
+        closing=bodies[-1]
+        self.assertFalse(closing.get('tools'))
+        self.assertTrue(any(isinstance(item.get('content'), list)
+            and any(part.get('type')=='input_image' for part in item['content'])
+            for item in closing['input']))
+        self.assertNotIn(NAMED_REPLY_STYLE,closing['input'][-1]['content'])
+
     async def test_failed_trusted_quote_image_answers_preview_with_revocable_source(self):
         from ournotes_bot.domain.chat_images import ImageError,parse_attachments
         agent=self.backend.model_runtime.agent;bodies=self.capture_native_bodies()
@@ -7493,7 +7587,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('这是未点名的群聊观察',bodies[-1]['messages'][0]['content'])
         from ournotes_bot.application.chat_agent import CHAT_SEMANTICS
         self.assertIn(CHAT_SEMANTICS,bodies[-1]['messages'][0]['content'])
-        self.assertIn('根据已有结果回答',bodies[-1]['messages'][-1]['content'])
+        self.assertIn('本轮检索预算结束',bodies[-1]['messages'][-1]['content'])
         self.assertEqual(direct['parts'][0]['text'],'我在听')
         self.event(direct,'intent');self.event(direct,'ack')
 
