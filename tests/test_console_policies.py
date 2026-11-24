@@ -9701,8 +9701,14 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         finished=[event['data'] for event in events if event['kind']=='finished']
         self.assertEqual(len(finished),1)
         self.assertEqual(finished[0]['reason'],'observation_replaced')
-        self.assertEqual(finished[0]['stage'],'generation' if generation else 'decision')
-        self.assertEqual(events[-1]['kind'],'attempt_timing')
+        stage='generation' if generation else 'decision'
+        self.assertEqual(finished[0]['stage'],stage)
+        finished_index=next(i for i,event in enumerate(events) if event['kind']=='finished')
+        late_events=events[finished_index+1:]
+        [timing]=[event['data'] for event in late_events if event['kind']=='attempt_timing']
+        [provider]=[event['data'] for event in late_events if event['kind']=='provider_chat']
+        self.assertEqual(provider['attempt_id'],timing['attempt_id'])
+        self.assertEqual(provider['stage'],stage)
         self.assert_chat_outcome(raw['request_id'],'observation_replaced')
 
     async def test_cancelled_known_decision_reconciles_controller_after_late_completion(self):
