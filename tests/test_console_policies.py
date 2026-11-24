@@ -120,6 +120,25 @@ class QueryCompositionTests(Fixture, unittest.IsolatedAsyncioTestCase):
             self.assertFalse(any(work.chat for work in self.backend.works.values()))
         self.assertIsNone(self.backend.model_runtime)
 
+    async def test_query_local_keeps_its_original_mention_classification_and_arguments(self):
+        for body in ('<@peer-2> /查卡 1','<@peer-2> /聊 你好'):
+            reply = await self.client.post('/v1/classify',json={'body':body})
+            self.assertEqual(reply.status,200)
+            self.assertFalse((await reply.json())['recognized'])
+        request=self.request('mentioned-query',1)
+        request['body']='/查曲 <@peer-2>'
+        with patch.object(self.backend.gate,'prepare',return_value=PreparedReply('捕获的查询')) as prepare:
+            plan=await self.prepare_http(request)
+        self.assertEqual(plan['parts'][0]['text'],'捕获的查询')
+        self.assertEqual(prepare.call_args.args[0],'查曲 <@peer-2>')
+        self.event(plan,'intent');self.event(plan,'ack')
+        multiline=self.request('multiline-query',2)
+        multiline['body']='  /查 查曲 MyGO\n/帮助'
+        with patch.object(self.backend,'prepare_command',return_value=PreparedReply('捕获的自然查询')) as prepare:
+            plan=await self.prepare_http(multiline)
+        self.assertEqual(len(plan['parts']),1)
+        self.assertEqual(prepare.call_args.args[1],multiline['body'])
+
     async def test_shared_detail_rechecks_after_current_source_read(self):
         import time
         from types import SimpleNamespace
@@ -3924,6 +3943,21 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         [provider] = [event['data'] for event in events if event['kind']=='provider_chat']
         self.assertEqual(provider['context']['quote_previews'],1)
         self.assertNotIn(quote,json.dumps(events,ensure_ascii=False))
+        group_events=self.backend.diagnostics.db.execute('''SELECT e.kind FROM chat_events e
+            JOIN requests r ON r.id=e.request_id WHERE r.group_id=?''',('g1',)).fetchall()
+        self.assertTrue(group_events)
+        self.assertNotIn('provider_chat',[row['kind'] for row in group_events])
+        from types import SimpleNamespace
+        diagnostics=self.backend.diagnostics
+        pending=SimpleNamespace(request_id='f'*64,kind='group',conversation_id='g1')
+        self.assertTrue(diagnostics.admitted(pending,'fixture-details','e1',self.now,[]))
+        for _ in range(31):
+            self.assertTrue(diagnostics.chat_event(pending.request_id,'control',self.now,status='fixture'))
+        self.assertTrue(diagnostics.chat_event(pending.request_id,'reply_ready',self.now))
+        self.assertTrue(diagnostics.chat_event(pending.request_id,'provider_chat',self.now,**provider))
+        self.assertTrue(diagnostics.chat_event(pending.request_id,'control',self.now,status='fixture_final'))
+        self.assertEqual([row['kind'] for row in diagnostics.read(pending.request_id)['chat_events'][-2:]],
+            ['provider_chat','control'])
         self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_story_relationship_infers_only_from_explicit_user_conditions(self):

@@ -137,7 +137,7 @@ function quotePreview(data: Record<string,unknown>, messageId: string): Pick<Inb
 /** Recognizer comes from the business entry manifest; do not duplicate query parsing. */
 export async function decodeIncoming(
   bot: QQBot, raw: unknown, identity: Identity, recognizes: (body: string) => boolean,
-  observe = false,
+  observe = false, preservePeerMentions = true,
 ): Promise<IngressResult> {
   if (![identity.instanceId, identity.appId, identity.selfId].every(id)) {
     throw new Error('invalid configured identity')
@@ -176,13 +176,17 @@ export async function decodeIncoming(
     || mentions.some(mention => mention?.is_you === true)
     || tags.includes(identity.appId) || tags.includes(identity.selfId)
   if (!addressed && !observe) return { status: 'ignored', reason: 'not_addressed' }
-  const botMentions = new Set([identity.appId, identity.selfId])
-  for (const mention of mentions) {
-    if (mention?.is_you === true && mention.scope !== 'all' && id(mention.id)) botMentions.add(mention.id)
+  let body = data.content
+  if (preservePeerMentions) {
+    const botMentions = new Set([identity.appId, identity.selfId])
+    for (const mention of mentions) {
+      if (mention?.is_you === true && mention.scope !== 'all' && id(mention.id)) botMentions.add(mention.id)
+    }
+    body = body.replace(/<@!?([\w-]+)>/gu, (tag, target: string) => botMentions.has(target) ? '' : tag)
+  } else if (addressed) {
+    body = body.replace(/<@!?\w+>/gu, '')
   }
-  // Non-bot mentions keep their original order and QQ IDs in the message body.
-  const body = data.content.replace(/<@!?([\w-]+)>/gu,
-    (tag, target: string) => botMentions.has(target) ? '' : tag).trim()
+  body = body.trim()
   const attachments = imageAttachments(data.attachments, data.id)
   if (!attachments) return { status: 'rejected', reason: 'invalid_attachments' }
   if ((!attachments.length || /^[/／]/u.test(body)) && (!body || addressed && !recognizes(body))) return { status: 'ignored', reason: 'not_taki' }

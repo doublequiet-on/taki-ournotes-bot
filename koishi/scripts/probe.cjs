@@ -2512,6 +2512,26 @@ async function main() {
         assert.deepEqual(client.encode(parsed.inbound,1,policy),old)
       } finally { await env.ctx.stop() }
     })
+    await run('Query-local receiver keeps legacy mention normalization',async()=>{
+      const fixture=receiverFixture({readiness:{execution_profile:'query-local-v1'}})
+      try {
+        const session=await fixture.session('query-local-mentions', raw=>{
+          raw.d.content='<@fixtureapp><@peer> /查曲 <@peer-2>'
+        })
+        fixture.release('query-local-mentions')
+        assert.equal(await fixture.receiver.receive(session),true)
+        assert.equal(fixture.submitted.length,1)
+        assert.equal(fixture.submitted[0].input.body,'/查曲 <@peer-2>')
+      } finally { await fixture.close() }
+    })
+    await run('Failed backend startup leaves unaddressed messages for other plugins',async()=>{
+      const fixture=receiverFixture({async initialize(){throw new Error('fixture startup failure')}})
+      try {
+        const session=await fixture.ordinary('startup-failed-ordinary')
+        assert.equal(await fixture.receiver.receive(session),false)
+        assert.equal(fixture.submitted.length,0)
+      } finally { await fixture.close() }
+    })
     await run('Explicit QQ quote images cross the negotiated wire as separate attachments',async()=>{
       const ready=wire.decodeReady(httpV2.python_to_ts.ready)
       const fixture=receiverFixture({readiness:ready,async directChat(body){return body.startsWith('taki')}})
