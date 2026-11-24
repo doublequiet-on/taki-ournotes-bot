@@ -10,6 +10,13 @@ from ..domain.chat import PERSONA_VERSION
 
 
 _CHAT_OUTCOME_EVENTS = ('control', 'decision', 'error', 'finished')
+_PERSONA_FALLBACKS = ('story_not_configured', 'approval_missing', 'current_missing',
+                      'revision_mismatch', 'source_withdrawn', 'persona_withdrawn')
+_PROVIDER_CONTEXT_COUNTS = {'current', 'observed', 'history', 'delivered', 'summary',
+                            'quote_previews', 'referenced_display', 'images', 'tool_results', 'visible_replies'}
+_PROVIDER_CONTEXT_CUTS = {'addressed_input_limit', 'input_limit', 'observation_gap', 'image_boundary',
+                          'standalone_question', 'quote_focus', 'topic_boundary', 'selection',
+                          'history_budget', 'expired'}
 # A prepared reply's closure comes from the terminal event and platform receipt.
 _CHAT_OUTCOME_COLUMNS = ', '.join(
     f"""(SELECT data FROM chat_events WHERE request_id=requests.id AND kind='{kind}'
@@ -109,10 +116,36 @@ class Diagnostics:
             if reason=='approved':
                 if not (isinstance(version,str) and re.fullmatch('[0-9a-f]{64}',version)):
                     raise ValueError('chat_persona_data')
-            elif (reason not in ('story_not_configured','approval_missing','current_missing',
-                                 'revision_mismatch','source_withdrawn','persona_withdrawn')
-                  or version!=PERSONA_VERSION):
+            elif reason not in _PERSONA_FALLBACKS or version!=PERSONA_VERSION:
                 raise ValueError('chat_persona_data')
+            return json.dumps(data)
+        if kind=='provider_chat':
+            patterns = {'attempt_id': r'[0-9a-f]{32}', 'model': r'[A-Za-z0-9][A-Za-z0-9_./:-]{0,119}',
+                        'profile_version': r'[A-Za-z0-9_.:-]{1,80}', 'template_version': r'agent-chat/[0-9]{1,3}'}
+            choices = {'trigger': ('command','ask','quoted_reply','button','observation','proactive'),
+                       'entry': ('addressed','continuation','proactive','lightweight','proactive_image','public_search'),
+                       'stage': ('decision','decision_and_generation','generation','tools_available','lookup'),
+                       'transport': ('native','hermes'), 'provider': ('deepseek','openai','openrouter'),
+                       'wire_profile': ('openai-responses-v1','deepseek-chat-v1','openai-chat-v1','openrouter-chat-v1'),
+                       'reasoning_effort': (None,'none','minimal','low','medium','high','xhigh','max'),
+                       'persona_reason': (*_PERSONA_FALLBACKS,'approved','not_used')}
+            bounds = {'input_bound': 65536, 'input_limit': 65536, 'output_limit': 8192}
+            if (set(data) != patterns.keys() | choices.keys() | bounds.keys() | {'context','cuts','persona_version'}
+                    or any(not isinstance(data[key], str) or not re.fullmatch(pattern, data[key])
+                           for key, pattern in patterns.items())
+                    or any(data[key] not in allowed for key, allowed in choices.items())
+                    or any(type(data[key]) is not int or not 1 <= data[key] <= limit for key, limit in bounds.items())
+                    or not isinstance(data['context'], dict) or set(data['context']) != _PROVIDER_CONTEXT_COUNTS
+                    or any(type(value) is not int or not 0 <= value <= 1000 for value in data['context'].values())
+                    or not isinstance(data['cuts'], list) or len(data['cuts']) > len(_PROVIDER_CONTEXT_CUTS)
+                    or any(not isinstance(cut, str) or cut not in _PROVIDER_CONTEXT_CUTS for cut in data['cuts'])):
+                raise ValueError('chat_provider_data')
+            reason, version = data['persona_reason'], data['persona_version']
+            if reason == 'not_used':
+                if version is not None:
+                    raise ValueError('chat_provider_data')
+            else:
+                Diagnostics.chat_metadata('persona', dict(reason=reason, persona_version=version))
             return json.dumps(data)
         if kind=='reply_ready' and not data:
             return '{}'
@@ -192,10 +225,13 @@ class Diagnostics:
         """Bounded operational metadata; never accepts dialogue, URLs or tool arguments."""
         def save(db):
             payload=self.chat_metadata(kind,data)
-            if db.execute('SELECT count(*) FROM chat_events WHERE request_id=?',(request_id,)).fetchone()[0]>=32:
+            detail_only = kind == 'provider_chat'
+            count = db.execute('SELECT count(*) FROM chat_events WHERE request_id=? AND (kind=?)=?',
+                               (request_id, 'provider_chat', detail_only)).fetchone()[0]
+            if count >= (6 if detail_only else 32):
                 self.dropped+=1
                 # Extra evidence must not displace events the original stream could retain.
-                if kind in ('evidence','attempt_timing','reply_ready') or not db.execute('''DELETE FROM chat_events WHERE id=(
+                if detail_only or kind in ('evidence','attempt_timing','reply_ready') or not db.execute('''DELETE FROM chat_events WHERE id=(
                         SELECT id FROM chat_events WHERE request_id=? AND kind IN ('evidence','attempt_timing','reply_ready')
                         ORDER BY CASE WHEN kind='evidence' THEN 1 ELSE 0 END,id LIMIT 1)''',(request_id,)).rowcount:
                     return
@@ -220,7 +256,7 @@ class Diagnostics:
         try:
             rows=self.db.execute('''SELECT request_id,kind,data,observed_at FROM (
                 SELECT e.request_id,e.kind,e.data,e.observed_at FROM chat_events e
-                JOIN requests r ON r.id=e.request_id WHERE r.group_id=?
+                JOIN requests r ON r.id=e.request_id WHERE r.group_id=? AND e.kind<>'provider_chat'
                 UNION ALL
                 SELECT request_id,kind,data,observed_at FROM conversation_events WHERE group_id=?
                 ) ORDER BY observed_at DESC LIMIT ?''',(group_id,group_id,max(1,min(limit,100))))

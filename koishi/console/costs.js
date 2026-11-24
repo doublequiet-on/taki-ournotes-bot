@@ -206,7 +206,9 @@ export function executionView(detail){
  h('h3','处理与发送阶段'),h('ul',spans.filter(v=>v.kind!=='model_route').map(v=>h('li',`${v.kind} · ${v.duration_ms==null?'耗时未采集':v.duration_ms+' ms'} · ${v.outcome||'结果未采集'}`))),h('p',`平台确认 ${detail.confirmed_parts} / ${detail.part_count} 部分；平台回执不代表客户端已读。`)]);
 }
 
-const eventKinds={control:'接话判断',decision:'参与判断',task:'资料任务',tool:'资料工具',research:'资料补查',context:'交流上下文',image:'图片理解',error:'处理失败',finished:'处理结束',transport:'模型传输',persona:'人格选择',evidence:'资料链路'};
+const eventKinds={control:'接话判断',decision:'参与判断',task:'资料任务',tool:'资料工具',research:'资料补查',context:'交流上下文',image:'图片理解',error:'处理失败',finished:'处理结束',transport:'模型传输',persona:'人格选择',evidence:'资料链路',provider_chat:'实际模型请求'};
+const providerStage={decision:'只判断是否接话',decision_and_generation:'判断并生成回复',
+ generation:'生成回复',tools_available:'回答或调用工具',lookup:'公开资料检索'};
 const eventValues={excluded_user:'命中不主动搭话名单',followup_disabled:'本群已关闭免 @ 续聊',platform_unapproved:'平台普通群收发尚未批准',followup_candidate:'窗口内的续聊候选',conversation_ended:'用户已结束交流',settings_saved:'交流设置已保存',window_expired:'续聊窗口已结束',observation:'群消息观察',continuation:'免 @ 续聊',settings:'交流设置',skip:'跳过',candidate:'等待语义判断',saved:'已保存',reply:'接话',respond:'接话',ignore:'跳过',set:'建立或更新',cancel:'取消',result:'结果',waiting:'等待补充',partial:'部分完成',completed:'资料已齐',cancelled:'已取消',ok:'成功',not_available:'数据不可用',no_results:'没有匹配资料',source_unavailable:'资料来源暂不可用',tool_timeout:'查询超时',query_source_changed:'资料版本已变化',knowledge_search:'知识库搜索',site_search:'Haneoka 搜索',site_read:'读取 Haneoka 资料',read_entity_fields:'读取对象字段',research_task:'连续资料任务',web_search:'联网搜索',observe:'观察',delivered:'已交给平台',failed:'失败',not_delivered:'未送达'};
 Object.assign(eventValues,{defer:'暂不接话，等待更多上下文',conversation_busy:'正在处理另一位用户发起的交流',supplement_merged:'已合并同一用户的连续补充',budget_exhausted:'本次交流额度已用完',chat_service_cost_limit:'本群每小时费用额度不足（包含待核账占用）',chat_service_daily_cost_limit:'本群每日费用额度不足（包含待核账占用）',chat_service_reservation_limit:'剩余额度不足以预留判断和回复',chat_service_evaluation_limit:'本群每小时接话判断次数已达上限',chat_service_call_limit:'本群每小时模型调用次数已达上限',chat_service_reply_limit:'本群每小时主动回复次数已达上限',chat_service_cooldown:'尚在主动发起间隔内',service_disabled:'本群主动参与已关闭',success:'处理成功',proactive_skip:'本轮跳过',proactive_defer:'等待更多上下文',proactive_stale:'交流上下文已变化',model_protocol_error:'模型返回格式不符合要求',invalid_json:'判断结果格式无效',json_syntax:'结构化结果解析失败',non_text:'结果不是文字',loaded:'图片已读取',provider_unavailable:'模型服务暂不可用',quota_exceeded:'额度已用完',deadline:'处理超时',aborted:'处理已终止',expired:'请求已过期',haneoka:'Haneoka',knowledge:'已审核知识库'});
 Object.assign(eventValues,{echo:'主动回复重复当前消息，已跳过',lightweight:'轻量纯文本上下文',lightweight_echo:'轻量回复原样重复，已跳过',
@@ -239,6 +241,14 @@ export function chatEventsView(events,{group=false}={}){
         if(data.reason!=='approved'&&personaReasons[data.reason])parts.push(personaReasons[data.reason]);
         if(data.persona_version)parts.push(data.persona_version);
       }
+     if(event.kind==='provider_chat'){
+       const context=data.context||{};
+       parts.push(providerStage[data.stage],data.model,
+         data.persona_reason==='not_used'?'未使用聊天人格':
+         data.persona_reason==='approved'?personaReasons.approved:'基础人格（'+personaReasons[data.persona_reason]+'）');
+       if(context.observed)parts.push(`群观察 ${context.observed} 条`);
+       if(context.images)parts.push(`图片 ${context.images} 张`);
+     }
      if(data.continuation)parts.push('免 @ 续聊');
      if(data.window_seconds!=null)parts.push(`窗口 ${data.window_seconds} 秒`);
      if(data.research_fallback)parts.push('知识库后继续补查 Haneoka');

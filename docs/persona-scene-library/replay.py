@@ -168,7 +168,7 @@ def judge_body(case, candidates):
                 text={"format": {"type": "json_schema", "name": "persona_scores", "strict": True, "schema": schema}})
 
 
-def call(key, stage, label, body):
+def call(key, stage, label, body, *, prose_only=False):
     request = Request("https://api.openai.com/v1/responses",
                       json.dumps(body, ensure_ascii=False).encode("utf-8"),
                       {"Authorization": "Bearer " + key, "Content-Type": "application/json"})
@@ -183,6 +183,8 @@ def call(key, stage, label, body):
                  for part in item["content"] if part["type"] == "output_text"]
         text = "\n".join(parts).strip()
         status = "ok" if text and data["status"] == "completed" else "incomplete"
+        if prose_only and any(item["type"] not in ("reasoning", "message") for item in data.get("output", ())):
+            status, text = "tool_or_action", None
     except HTTPError as error:
         status = f"http_{error.code}"
     except (URLError, OSError, ValueError, KeyError) as error:

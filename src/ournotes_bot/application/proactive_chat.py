@@ -38,11 +38,34 @@ def topic_keys(text):
     return keys
 
 
+_ELLIPTICAL = re.compile(
+    r'^(?:结果|后来|然后|当时|那次|还是|也是|所以|第二次|第三次)|^(?:[.。…]+)$')
+
+
 def select_topic_context(rows, *, limit=6):
-    """Keep current and adjacent turns and, when relevant, one earlier exchange."""
+    """Keep recent turns and prioritize a verified reply chain or an older continuation."""
     if len(rows) <= limit:
         return rows, False
     current = rows[-1]
+    # Follow only links to earlier rows in this scoped scene.
+    by_id = {row.message_id: (index, row) for index, row in enumerate(rows)}
+    linked = {current.message_id}
+    index, row = len(rows) - 1, current
+    while row.reply_to in by_id and len(linked) < limit:
+        prior_index, prior = by_id[row.reply_to]
+        if prior_index >= index:
+            break
+        linked.add(prior.message_id)
+        index, row = prior_index, prior
+    if len(linked) > 1:
+        selected = linked.copy()
+        for row in reversed(rows):
+            if len(selected) == limit:
+                break
+            selected.add(row.message_id)
+        return [row for row in rows if row.message_id in selected], bool(
+            linked - {row.message_id for row in rows[-limit:]})
+
     keys = topic_keys(current.text)
     text = unicodedata.normalize('NFKC', current.text[:1024]).casefold()
     recent = rows[-limit:]
@@ -70,7 +93,14 @@ def select_topic_context(rows, *, limit=6):
     older = [(score(row), index) for index, row in enumerate(rows[:-limit])]
     strength, index = max(older)
     if not strength[0] or strength <= best_recent:
-        return recent, False
+        if not _ELLIPTICAL.match(text.lstrip()):
+            return recent, False
+        earlier = next((i for i in range(len(rows)-2, -1, -1)
+                        if rows[i].role == 'user' and rows[i].speaker_id == current.speaker_id), None)
+        if (earlier is None or earlier >= len(rows)-limit
+                or not 0 <= current.timestamp_ms - rows[earlier].timestamp_ms <= 60_000):
+            return recent, False
+        index = earlier
     anchor = rows[index]
     reply = next((row for row in reversed(rows[index + 1:-1])
                   if row.role == 'assistant' and row.reply_to == anchor.message_id), None)
@@ -347,6 +377,15 @@ class ProactiveController:
             return next((row.message for row in reversed(group.rows)
                          if row.message.message_id==group.target_id),None)
 
+    def addressed_quote(self, scope, message_id):
+        group = self.groups.get(scope)
+        if group is None or not group.policy.available:
+            return None
+        return next((row.message for row in reversed(group.rows)
+                     if row.message.message_id == message_id and row.plain_text and not row.image
+                     and row.context_generation == group.context_generation
+                     and row.at > self.clock() - 60 and len(row.message.text.encode()) <= 1024), None)
+
     def addressed_background(self, scope, timestamp_ms, *, source_ids):
         group = self.groups.get(scope)
         if group is None or not group.policy.available or group.continuation_user_id is not None:
@@ -524,7 +563,8 @@ class ProactiveController:
             # Keep the history as it stood up to that target's receipt.
             rows = rows[:target_index + 1]
             rows = [row for row in rows if row.at > now - 300
-                    and (context_gap_ms is None or row.context_generation == group.context_generation)]
+                    and (context_gap_ms is None or row.context_generation == group.context_generation)
+                    and target.timestamp_ms - row.message.timestamp_ms < 300_000]
             last_image = next((i for i in range(len(rows)-1, -1, -1) if rows[i].image), None)
             if last_image is not None:
                 rows = rows[last_image:]
