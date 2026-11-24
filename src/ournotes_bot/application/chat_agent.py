@@ -97,6 +97,13 @@ CHAT_SEMANTICS = '''日常接话和普通观点通常一两句，说清立场与
 理解角色口吻和群内用语后，用自己的直率、认真和轻微吐槽回应；不模仿特定群友的整套口癖或复读凑话。具体角色设定仍依已审核资料，不编造助手的剧中经历或人物关系。
 assistant 历史只证明说过，不证明说得对；图片标记不代表看过图，实际图像输入或成功读取后才可描述。'''
 
+NAMED_REPLY_STYLE = (
+    '照当前发言要做的事回复。普通吐槽、分享或熟人玩笑，挑眼前一点给自己的反应，说够就停。'
+    '用已经说清的经过理解话头，省去重讲和点评；合适时可以共情、祝贺或轻轻回嘴。'
+    '对方只反馈你的回复方式时，接住那一点就停。'
+    '明确问原因、求建议、要总结或详细解释，给足所问的内容。事实缺口影响答案时，直说具体缺哪一项。'
+)
+
 SOURCE_SEMANTICS = '''
 普通卡片、歌曲、技能和玩法机制未指定区服时默认用日服资料。“我玩国际服”只是用户背景；明确询问国际服的卡片、歌曲、技能或规则，以及要求比较不同区服时，必须保留对应服务器，不能用日服资料冒充国际服。每项资料按实际来源标识区服；缺少对应服别的数据时说明缺口。查询排行榜、活动进度、当前卡池和公告等状态也按指定服务器回答。
 知识库结果是否足够回答比是否搜到更重要：缺具体字段、细节或当前资料时，主动用 site_search/site_read 查 Haneoka 的详情和已知关联，结合审核规则分析。一次检索没找到时可换关键词或资源类型，不立即让用户自行找资料。只在完成问题需要时补查，已有充分依据就回答。
@@ -1617,6 +1624,17 @@ class ChatAgent:
             or transition=='switch' or work.chat_task.goal or work.chat_additions or work.chat_addition_images)
                 and len(user_question)<=96 and '\n' not in user_question):
             messages=self.with_addressed_context(work,messages,initial_tools)
+        named_text_reply = explicit_text and not (route or mechanic or has_quote or quote_prefix or scope_note)
+
+        def reply_closing(closing):
+            if (not named_text_reply or operations or work.chat_task.goal
+                    or any(message.get('images') for message in messages)):
+                return closing
+            style = '本轮不再调用工具。' + NAMED_REPLY_STYLE
+            styled = [*messages, {'role':'system','content':style}]
+            # Keep the original closing for requests already near the provider input limit.
+            return style if runtime.input_bound(work,styled,[]) <= work.model_snapshot.profile.max_input_tokens else closing
+
         self.proactive.trace(work,'context',messages=sum(item['role']!='system' for item in messages),
             assistant_messages=sum(item['role']=='assistant' for item in messages),
             image_markers=sum('[图片附件 ' in item['content'] for item in messages),
@@ -1824,7 +1842,7 @@ class ChatAgent:
                              if work.proactive is not None and not proactive_evidence else '本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。')
                     if work.chat_task.goal:closing+='\n任务完成情况：'+json.dumps(work.chat_task.coverage(),ensure_ascii=False)+'；逐项回应，缺资料的项目直接说具体缺口。'
                     if scope_note:closing+='\n'+scope_note
-                    messages.append({'role':'system','content':closing})
+                    messages.append({'role':'system','content':reply_closing(closing)})
                 reservation=final_attempt if final else None
                 active_registry = {required:registry[required]} if required else registry
                 if (chapter_lookup and 'story_search' in active_registry and
@@ -1852,7 +1870,7 @@ class ChatAgent:
                     final=True
                     closing=('剩余额度用于收束。结合当前群聊和已有资料决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不再查询。'
                              if work.proactive is not None and not proactive_evidence else '剩余额度用于收束。根据已有资料回答，不再查询。')
-                    messages.append({'role':'system','content':closing})
+                    messages.append({'role':'system','content':reply_closing(closing)})
                     reservation=final_attempt
                     work.proactive_generation=bool(proactive_evidence)
                     result=await runtime.attempt(work,messages,[],user,group,deadline,leases,reservation=reservation,
