@@ -386,13 +386,14 @@ class ProactiveController:
                      and row.context_generation == group.context_generation
                      and row.at > self.clock() - 60 and len(row.message.text.encode()) <= 1024), None)
 
-    def addressed_background(self, scope, timestamp_ms):
+    def addressed_background(self, scope, timestamp_ms, *, source_ids):
         group = self.groups.get(scope)
         if group is None or not group.policy.available or group.continuation_user_id is not None:
             return ()
         rows = []
-        for row in reversed(group.rows[-2:]):
-            if (row.context_generation != group.context_generation or not row.plain_text or row.image
+        for row, source_id in zip(reversed(group.rows[-2:]), reversed(source_ids)):
+            if (row.message.message_id != source_id
+                    or row.context_generation != group.context_generation or not row.plain_text or row.image
                     or not 0 <= timestamp_ms - row.message.timestamp_ms < 60_000
                     or len(row.message.text.encode()) > 1024):
                 break

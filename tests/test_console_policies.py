@@ -8526,27 +8526,41 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_one_pass_queued_candidate_releases_on_explicit_topic_shift(self):
         await self.replace_queued_lightweight('换个话题，排练室的门今天又夹手了',one_pass=True,transition='shift')
 
-    async def addressed_background_fixture(self, *, primary_approved=True, shift=False, next_seq=3, reapprove=False):
+    async def addressed_background_fixture(self, *, primary_approved=True, shift=False, next_seq=3,
+                                             reapprove=False, lightweight=True, observation_seqs=(1, 2),
+                                             exclude_second_speaker=None):
         self.enable_lightweight_fact_fixture()
         runtime=self.backend.model_runtime
         runtime.capabilities.generation=Mock(return_value='approved-chat-context')
-        if not primary_approved:
+        if not lightweight or not primary_approved:
+            observed_snapshot=self.snapshot
             runtime.dedicated_proactive=Mock(return_value=True)
-            runtime.proactive_snapshot=Mock(side_effect=lambda _:self.snapshot)
+            runtime.proactive_snapshot=Mock(return_value=observed_snapshot)
             runtime.proactive_capabilities.proactive=Mock(return_value=True)
+            runtime.proactive_capabilities.generation=Mock(return_value='approved-observed-context')
             self.agent.proactive.services.policy=Mock(return_value=self.policy)
+        if not primary_approved:
             runtime.capabilities.proactive=Mock(return_value=False)
-        self.save_conversation_settings(followup_enabled=False)
-        prior=('报名表用祝当代号，阿遥写张。','对，祝是表上的姓。')
+        if not lightweight:
+            self.agent.proactive.lightweight_groups=frozenset()
+            self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,model='gpt-6.2-sol'))
+        excluded_users=[dict(user_id='bystander-2',label='成员')]
+        self.save_conversation_settings(followup_enabled=False,
+            excluded_users=excluded_users if exclude_second_speaker=='before' else [])
+        prior=(('报名表用祝当代号，阿遥写张。','对，祝是表上的姓。') if lightweight
+               else ('先约周六排练吧','周六不行，改周日'))
         if shift:
             prior=(prior[0],'换个话题，排练室的门又夹手了。')
-        for seq,text in enumerate(prior,1):
-            self.current_user='bystander-'+str(seq)
+        for position,(seq,text) in enumerate(zip(observation_seqs,prior,strict=True),1):
+            self.current_user='bystander-'+str(position)
             self.now+=.01
             value=self.request('prior-'+str(seq),seq)
-            value.update(trigger='observation',body=text)
+            value.update(trigger='observation',body=text,sender_name='小满')
             parsed=Request.parse(value,'fixture','app',self.now)
-            self.assertTrue(self.agent.proactive.gateway_observation(parsed)[0])
+            self.assertEqual(self.agent.proactive.gateway_observation(parsed)[0],
+                             not (position==2 and exclude_second_speaker=='before'))
+        if exclude_second_speaker=='after':
+            self.save_conversation_settings(excluded_users=excluded_users)
         self.current_user='u1'
         self.now+=.01
         bodies=ChatAgentTests.capture_native_bodies(self)
@@ -8556,8 +8570,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             if reapprove:
                 runtime.capabilities.generation.return_value='replacement-context-grant'
             return await prepare(work,question)
+        question='taki你是祝' if lightweight else '/聊 那按刚才说的？'
         with patch.object(runtime,'prepare_chat',side_effect=after_capture):
-            plan,attempts=await self.prepare_native('taki你是祝',seq=next_seq)
+            plan,attempts=await self.prepare_native(question,seq=next_seq)
         self.assertEqual(len(attempts),1)
         messages=[json.loads(item['content']) for item in bodies[0]['input'] if item['role']=='user']
         background=[row['message_id'] for row in messages if row.get('observed_group_context')]
@@ -8586,6 +8601,41 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         _,background,messages=await self.addressed_background_fixture(primary_approved=False)
         self.assertEqual(background,[])
         self.assertEqual([row['message_id'] for row in messages],['native3'])
+
+    async def test_ordinary_pointed_chat_uses_observed_speakers_without_archiving_their_text(self):
+        _,background,messages=await self.addressed_background_fixture(lightweight=False)
+        self.assertEqual(background,['prior-1','prior-2'])
+        self.assertEqual([(m['speaker_id'],m['display_name'],m['text']) for m in messages[:2]],[
+            ('bystander-1','小满','先约周六排练吧'),('bystander-2','小满','周六不行，改周日')])
+        self.assertEqual(messages[-1]['text'],'那按刚才说的？')
+        self.assertFalse(self.agent.store.read(Request_scope(),background)['messages'])
+
+    async def test_ordinary_pointed_chat_omits_observations_without_primary_approval(self):
+        _,background,messages=await self.addressed_background_fixture(lightweight=False,primary_approved=False)
+        self.assertEqual(background,[])
+        self.assertEqual([row['text'] for row in messages],['那按刚才说的？'])
+
+    async def test_ordinary_pointed_chat_does_not_borrow_across_a_missing_observation(self):
+        _,background,messages=await self.addressed_background_fixture(
+            lightweight=False,observation_seqs=(1,3),next_seq=4)
+        self.assertEqual(background,['prior-3'])
+        self.assertEqual([row['text'] for row in messages],['周六不行，改周日','那按刚才说的？'])
+
+    async def test_ordinary_pointed_chat_does_not_borrow_across_an_excluded_speaker(self):
+        _,background,messages=await self.addressed_background_fixture(
+            lightweight=False,exclude_second_speaker='before')
+        self.assertEqual(background,[])
+        self.assertEqual([row['text'] for row in messages],['那按刚才说的？'])
+
+    async def test_ordinary_pointed_chat_does_not_reach_past_a_newly_excluded_turn(self):
+        _,background,messages=await self.addressed_background_fixture(
+            lightweight=False,exclude_second_speaker='after')
+        self.assertEqual(background,[])
+        self.assertEqual([row['text'] for row in messages],['那按刚才说的？'])
+
+    async def test_ordinary_pointed_chat_does_not_borrow_across_a_topic_shift(self):
+        _,background,_=await self.addressed_background_fixture(lightweight=False,shift=True)
+        self.assertEqual(background,['prior-2'])
 
     async def test_pointed_chat_background_stops_at_topic_shift(self):
         _,background,_=await self.addressed_background_fixture(shift=True)
