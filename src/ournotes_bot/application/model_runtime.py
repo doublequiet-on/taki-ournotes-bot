@@ -37,7 +37,7 @@ from .chat_jobs import ServiceError, lightweight_profile, uses_proactive_day_acc
 
 logger=logging.getLogger('ournotes_bot.model_transport')
 
-CHAT_TEMPLATE_VERSION = 'agent-chat/1'
+CHAT_TEMPLATE_VERSION = 'agent-chat/2'
 
 
 def provider_chat_context(body, work):
