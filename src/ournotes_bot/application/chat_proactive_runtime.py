@@ -112,6 +112,7 @@ class _ObservationReceipt:
     content_digest: str
     result: tuple[bool, int, bool]
     covered_seq: int
+    addressed_prefix: tuple[str, ...]
 
 
 class ProactiveChat:
@@ -445,8 +446,13 @@ class ProactiveChat:
         delay = self.observation_delay(request) if observed else None
         preserve = bool(observed and target is not None and current is target)
         result = (delay is not None, delay or 0, preserve)
+        # A named turn may only borrow from the contiguous accepted gateway suffix.
+        # An ignored observation, a sequence gap, or a topic shift ends that suffix.
+        prefix = (previous.addressed_prefix[-1:] if previous is not None and not gap
+                  and not _TOPIC_SHIFT.match(_echo_key(request.body).strip('，,！!？?~～')) else ())
         self.observation_responses[scope] = _ObservationReceipt(
-            request.gateway_epoch, request.ingress_seq, identity, result, request.ingress_seq)
+            request.gateway_epoch, request.ingress_seq, identity, result, request.ingress_seq,
+            (*prefix, request.message_id) if observed else ())
         self.observation_responses.move_to_end(scope)
         while len(self.observation_responses)>self.controller.max_scopes:
             self.observation_responses.popitem(last=False)
@@ -626,8 +632,7 @@ class ProactiveChat:
     def note_addressed_ingress(self, work, scope, settings):
         request = work.request
         previous = self.observation_responses.get(scope)
-        if (not work.chat or request.conversation_id not in self.lightweight_groups
-                or request.policy.natural_query != 'model'
+        if (not work.chat or request.policy.natural_query != 'model'
                 or request.attachments or request.reference or request.quote_hint or request.quoted_text
                 or _WEB_URL.search(unicodedata.normalize('NFKC', request.body))
                 or request.user_id in {row['user_id'] for row in settings['excluded_users']}
@@ -635,22 +640,26 @@ class ProactiveChat:
                 or request.ingress_seq != previous.covered_seq + 1
                 or not self.agent.store.source_valid(request.scope, request.message_id, request.timestamp_ms)):
             return
+        background = self.controller.addressed_background(
+            scope, request.timestamp_ms, source_ids=previous.addressed_prefix)
+        if request.conversation_id not in self.lightweight_groups:
+            work.addressed_background = background
+            return
         # /submit and /observations share the gateway's sequence. The ring
         # gets a position only; the named turn can borrow a bounded prefix.
         position = ChatMessage(request.message_id, request.user_id, '', request.timestamp_ms)
-        background = self.controller.addressed_background(scope, request.timestamp_ms)
         if self.controller.observe(scope, position, addressed=True):
             work.addressed_background = background
-            self.observation_responses[scope] = replace(previous, covered_seq=request.ingress_seq)
+            self.observation_responses[scope] = replace(previous, covered_seq=request.ingress_seq, addressed_prefix=())
             self.observation_responses.move_to_end(scope)
 
     def addressed_context_grant(self, snapshot, group_id):
         runtime = self.agent.runtime
-        if group_id not in self.lightweight_groups or not runtime.capabilities.proactive(snapshot, group_id):
+        if not runtime.capabilities.proactive(snapshot, group_id):
             return None
         observed_profile = runtime.proactive_snapshot(group_id)
         policy = self.policy(observed_profile, SimpleNamespace(conversation_id=group_id))
-        if not self.uses_lightweight(group_id, observed_profile.profile, policy):
+        if policy is None:
             return None
         primary_grant = runtime.capabilities.generation(snapshot)
         observed_grant = self.owners()[1].generation(observed_profile)
