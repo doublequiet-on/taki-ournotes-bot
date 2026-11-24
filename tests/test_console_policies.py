@@ -6024,6 +6024,14 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.services.policy=Mock(return_value=self.policy)
         self.backend.model_runtime.capabilities.proactive=Mock(return_value=True)
 
+    def approved_voice_fixture(self):
+        marker = '合成审批口吻标记：认真听取不同意见。'
+        self.agent.story = Mock()
+        self.agent.story.persona_selection.return_value = (dict(persona_id='fixture',
+            persona_sha256='c'*64, source_revision='d'*64, revocation_revision=0, prompt=marker), 'approved')
+        self.agent.story.valid.return_value = True
+        return marker
+
     def observation(self,body='大家继续聊这个问题',seq=1,attachments=None):
         from ournotes_bot.application.backend_protocol import Request
         value=self.request('observed'+str(seq),seq);value.update(body=body,trigger='observation')
@@ -6082,7 +6090,11 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.backend.lookup(old['request_id'],'e1')['send_allowed'])
         self.tick+=1.6
         bodies=ChatAgentTests.capture_native_bodies(self)
-        self.client.request.return_value=self.result('{"participation":"reply","text":"一起按新条件看"}')
+        marker = self.approved_voice_fixture()
+        async def respond(profile, body, **_):
+            self.assertIn(marker, body['messages'][0]['content'])
+            return self.result('{"participation":"reply","text":"一起按新条件看"}')
+        self.client.request.side_effect=respond
         plan,_,_=await self.candidate(newer,2)
         self.assertTrue(plan['send_allowed'])
         self.assertIn('先看第一部分',str(bodies));self.assertIn('再加一个限制',str(bodies))
@@ -6090,6 +6102,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                       if e['kind']=='provider_chat']
         self.assertEqual((provider['entry'],provider['stage'],provider['transport']),
                          ('continuation','decision_and_generation','native'))
+        self.assertEqual((provider['persona_reason'],provider['persona_version']), ('approved','c'*64))
 
     async def test_conversation_settings_revoke_the_matching_lane(self):
         value=await self.continuation_fixture()
@@ -7571,7 +7584,12 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             result='failure',message_id=None))
         bodies=ChatAgentTests.capture_native_bodies(self)
         value=self.observation('id不正确',seq=2);value['quoted_text']='6273939'
-        self.tick+=1.6;self.client.request.return_value=self.result('{"participation":"skip"}')
+        self.tick+=1.6
+        marker = self.approved_voice_fixture()
+        async def respond(profile, body, **_):
+            self.assertIn(marker, body['messages'][0]['content'])
+            return self.result('{"participation":"skip"}')
+        self.client.request.side_effect=respond
         await self.candidate(value)
         transcript=bodies[0]['messages']
         self.assertFalse(any(item['role']=='assistant' for item in transcript))
@@ -8265,8 +8283,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         source = '这段鼓终于练顺了'
         wire = []
         usage = self.backend.model_runtime.usage
+        marker = self.approved_voice_fixture()
 
         async def respond(profile, body, **kwargs):
+            self.assertIn(marker, body['input'][0]['content'])
             wire.append(json.loads(json.dumps(body)))
             if len(wire) == 1:
                 states = [row['state'] for row in usage.db.execute('SELECT state FROM attempts ORDER BY rowid')]
@@ -8299,6 +8319,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(e['attempt_id'], e['entry'], e['stage'], e['output_limit']) for e in providers],
                          [(attempts[0],'lightweight','decision',768),(attempts[1],'lightweight','generation',1024)])
         self.assertTrue(all(e['context']['observed']==5 and e['context']['current']==1 for e in providers))
+        self.assertTrue(all(e['persona_reason']=='approved' and e['persona_version']=='c'*64 for e in providers))
         with self.backend.diagnostics.db:
             self.backend.diagnostics.db.execute('DELETE FROM request_billing WHERE request_id=?',(plan['request_id'],))
         old_detail=self.backend.admin.view(self.backend.ledger.request(plan['request_id']),detail=True)
@@ -8424,7 +8445,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             if not observed:return
 
             ids=[]
+            marker = self.approved_voice_fixture()
             async def response(profile,body,**kw):
+                self.assertIn(marker, body['input'][0]['content'])
                 presented=[json.loads(item['content'])['message_id'] for item in body['input'][1:]]
                 ids.append(presented)
                 name=body.get('text',{}).get('format',{}).get('name')
