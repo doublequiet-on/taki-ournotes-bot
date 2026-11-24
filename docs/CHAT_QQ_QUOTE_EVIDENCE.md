@@ -24,7 +24,9 @@ Node SDK [parseRefIndices](https://github.com/tencent-connect/qqbot-nodejs/blob/
 
 其 [quoteRef](https://github.com/tencent-connect/qqbot-nodejs/blob/main/src/middleware/quote-ref.ts#L124-L187) 把当前消息的 `msgIdx` 与 `messageId/senderId` 记录关联，再查询被引索引。腾讯仓库中的[引用索引问题 #7](https://github.com/tencent-connect/qqbot-nodejs/issues/7) 截至本次读取仍开放，报告普通/被引索引不一致及多级引用出现 `TMP_` 值。该问题是报告者的可复现记录，不是腾讯确认所有账号均有相同行为的公告；它足以说明不能仅凭字段名称宣布本项目关联已验证。
 
-后续离线映射只能建立在当前已核对的 profile 上：原事件同时提供本消息索引与 `d.id`，在完整实例/应用/会话 scope 内记录二者及原作者，处理索引冲突、五分钟过期和容量淘汰；被引索引必须命中唯一关联才能取得原消息缓存。`TMP_`、相互冲突、缺失或无法关联的索引保持不可用。不能用正文相似度、时间靠近或“上一张图”猜原消息，也不能用本次追问者替代原图作者。
+当前离线验证的 `qq-msg-idx-v1` 仅在个人聊天后端声明支持时启用。有可用的内嵌引用图片时，网关继续走现有的本轮图片通路。网关在同一实例、应用和群内，将权限检查通过的原事件索引及 `d.id` 保留约五分钟，最多保留 2048 个索引。引用索引须唯一命中更早收到的事件。网关丢弃 `TMP_`、冲突、过期或无法关联的索引，保留原有文字预览。聊天按原消息 ID 在可见上下文中定位发言者。引用文字、预览昵称和入站 `message_reference` 对这一关联无效。
+
+离线探针使用安装的 Koishi QQ 适配器与合成事件核对同群关联、连续引用、跨群和索引冲突。真实账号的索引下发、匹配率、图片加载及 QQ 客户端显示待实机验收。
 
 ## 当前回合读取引用附件
 

@@ -34,12 +34,30 @@ from ..visuals import (render_card, render_card_list, render_chart, render_song_
 logger = logging.getLogger("ournotes_bot.replies")
 
 
-def explicit_chat(content: str) -> bool:
-    return bool(re.match(r"^[/／]聊(?:\s|$)", content.strip()))
+_MENTION_TAG = re.compile(r"<@!?[\w-]+>")
+_CHAT_COMMAND = re.compile(r"^((?:<@!?[\w-]+>\s*)*)[/／]聊(?:\s+|$)")
+
+
+def command_text(content: str) -> str:
+    return _MENTION_TAG.sub('', content).strip()
+
+
+def chat_command(content: str) -> str | None:
+    text = content.strip()
+    match = _CHAT_COMMAND.match(text)
+    if match:
+        return ' '.join(part for part in (match[1].strip(),text[match.end():].strip()) if part)
+    return None
+
+
+def explicit_chat(content: str, *, allow_leading_mentions: bool = True) -> bool:
+    if allow_leading_mentions:
+        return chat_command(content) is not None
+    return bool(re.match(r'^[/／]聊(?:\s|$)', content.strip()))
 
 
 def named_chat(content: str) -> bool:
-    text = content.strip()
+    text = command_text(content)
     return bool(text and not text.startswith(('/', '／')) and not recognizes_message(text) and
                 ('立希' in text or re.search(r'(?<![A-Za-z0-9_])taki(?![A-Za-z0-9_])', text, re.I)))
 
@@ -68,12 +86,12 @@ def command_kind(content: str) -> str:
             '查活动': 'event', '一图流': 'event'}.get(head, 'other')
 
 
-def recognizes_message(content: str) -> bool:
+def recognizes_message(content: str, *, allow_leading_mentions: bool = True) -> bool:
     """Read-only entry recognition; no repository, model, quota or context access."""
     from ..commands import ALIASES, UNAVAILABLE_COMMANDS
     specials = {"介绍", "about", "简介", "帮助", "help", "菜单", "指令", "ヘルプ",
                 "语言", "language", "言語", "调试数据", "数据状态", "状态", "版本", "status", "状態"}
-    if explicit_chat(content):
+    if explicit_chat(content, allow_leading_mentions=allow_leading_mentions):
         return True
     for text in split_commands(content):
         head = text.split(None, 1)[0].casefold()

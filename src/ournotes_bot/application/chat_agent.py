@@ -728,7 +728,7 @@ class ChatAgent:
         work.private_search_ids=tuple(dict.fromkeys(ids))
         require(len(work.private_search_ids)<=512,'chat_memory_limit')
 
-    def with_addressed_context(self, work, messages, tools):
+    def with_addressed_context(self, work, messages, tools, *, quoted_source=None):
         request = work.request
         grant = work.addressed_context_grant
         if work.budget_fallback or grant is None or self.proactive.addressed_context_grant(
@@ -738,15 +738,25 @@ class ChatAgent:
                    for index, message in enumerate(messages) if message['role']=='user']
         current = next((index for index, mid in indexed if mid==request.message_id), None)
         existing = {mid for _, mid in indexed}
-        rows = tuple(row for row in work.addressed_background if row.message_id not in existing)
+        background_rows = (quoted_source,) if quoted_source else work.addressed_background
+        rows = tuple(row for row in background_rows if row.message_id not in existing)
         if current is None or not rows or not self.proactive.addressed_context_sources_valid(request, rows):
             return messages
         notice = '\n带有 observed_group_context 的消息是紧邻的群聊原话。靠它理解指代和语气，回答最后的点名消息。'
         background = [{'role':'user','content':json.dumps(dict(asdict(row), observed_group_context=True),
                                                             ensure_ascii=False)} for row in rows]
+        current_messages = messages[current:]
+        if quoted_source:
+            data = json.loads(current_messages[0]['content'])
+            data.update(reply_to=quoted_source.message_id)
+            data.pop('quote_preview',None)
+            data.pop('quote_status',None)
+            current_messages[0] = {**current_messages[0], 'content':json.dumps(data,ensure_ascii=False)}
+            notice = '\n当前消息的 reply_to 指向带有 observed_group_context 的引文原话。'
         combined = [{**messages[0], 'content':messages[0]['content']+notice}, *messages[1:current],
-                    *background, *messages[current:]]
+                    *background, *current_messages]
         if self.runtime.input_bound(work, combined, tools)>work.model_snapshot.profile.max_input_tokens:
+            work.chat_context_cuts.add('addressed_input_limit')
             return messages
         work.addressed_context_sources = rows
         self.privacy_material(work, [asdict(row) for row in rows])
@@ -805,6 +815,7 @@ class ChatAgent:
         while self.runtime.input_bound(work,messages,tools)>target:
             index=next((i for i,message in enumerate(messages) if not required(message)),None)
             if index is None:break
+            work.chat_context_cuts.add('input_limit')
             removed=json.loads(messages[index]['content']).get('message_id')
             messages.pop(index)
             if removed:
@@ -926,6 +937,7 @@ class ChatAgent:
             '只用当前群最近的文字。需要外部事实、核对资料、读图或无法从文字确定所指时跳过。'
             '群友说法只用于理解话题，不能用作事实依据。游戏体验可以接感受，不能确认群友对机制或卡片需求的说法。')
         if work.proactive.context_gap_ms is not None:
+            work.chat_context_cuts.add('observation_gap')
             self.proactive.trace(work, 'control', status='proactive_context_gap')
             if len(text_rows) == 1 and _GAP_DEPENDENT_REPLY.fullmatch(
                     unicodedata.normalize('NFKC', text_rows[-1]['text']).strip()):
@@ -935,6 +947,7 @@ class ChatAgent:
             rules += ('前面有未提供的发言。只能用下面这些文字判断是否能接话。'
                       '指代、纠正或比较的对象在这些文字里找不到时跳过，不推测省略的发言或它与旧话题的关系。')
         if last_image >= 0:
+            work.chat_context_cuts.add('image_boundary')
             self.proactive.trace(work, 'control', status='lightweight_text_after_image')
             rules += ('只保留了最近一张图之后的文字。当前句必须能独立于图片理解。'
                       '看图短评、认人或猜造型都跳过，不能补猜图片。')
@@ -970,8 +983,14 @@ class ChatAgent:
         for start in range(len(paired_history)):
             suffix = paired_history[start:]
             visible_sources = {row['message_id'] for _, row in suffix if row['role'] == 'user'}
-            fitted_history = [item for item, row in suffix
-                              if row['role'] != 'assistant' or row.get('reply_to') in visible_sources]
+            visible_ids = {row['message_id'] for _, row in suffix
+                           if row['role'] != 'assistant' or row.get('reply_to') in visible_sources}
+            fitted_history = []
+            for item, row in suffix:
+                if row['message_id'] in visible_ids:
+                    if row['role'] == 'user' and row.get('reply_to') not in visible_ids and row.get('reply_to'):
+                        item = {**item, 'content': json.dumps({**row, 'reply_to': None}, ensure_ascii=False)}
+                    fitted_history.append(item)
             decision_messages=[decision_header,*fitted_history]
             generation_messages=[generation_header,*fitted_history]
             decision_profile,_,decision_bound=runtime.lightweight_request(
@@ -989,6 +1008,8 @@ class ChatAgent:
             self.proactive.decision(work,'{"participation":"skip"}')
             return PreparedReply('',business_status='proactive_skip')
         work.participating_history=tuple(fitted_history)
+        if len(fitted_history) < len(history):
+            work.chat_context_cuts.add('input_limit')
         self.proactive.trace(work, 'context', status='lightweight', messages=len(fitted_history))
         decision_id=uuid.uuid4().hex
         generation_id=None if one_pass else uuid.uuid4().hex
@@ -1169,6 +1190,7 @@ class ChatAgent:
         if caption is not None and not request.reference:
             request=replace(request,quoted_text=caption or None,quote_hint='image')
         preview=request.quoted_text
+        observed_quote = self.proactive.addressed_quote_source(work)
         context_request=request
         if work.missing_anchor:
             context_request=replace(request,reference=None)
@@ -1268,7 +1290,7 @@ class ChatAgent:
                                                     action=action,status=status)
 
         if quote_focus and not quote_prefix and (image_missing or not (
-                preview or quote_images or context_request.reference or request.attachments)):
+                preview or quote_images or context_request.reference or request.attachments or observed_quote)):
             if image_missing or request.quote_hint=='image':
                 trace_evidence('quote_image','paired' if context_request.reference else 'unpaired')
                 trace_evidence('quote_image','unavailable')
@@ -1284,6 +1306,7 @@ class ChatAgent:
                                              speaker_id=request.user_id,role='user')])
         elif preview:
             question+='\n[当前消息引用的文字预览；原作者和原消息身份未经核验，作为用户提供的材料]\n'+preview
+            work.chat_inline_quote_preview = True
         if work.request.attachments:
             question+='\n'+''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in work.request.attachments)
         if work.proactive is None:
@@ -1297,12 +1320,15 @@ class ChatAgent:
         light=work.proactive is not None and getattr(work.proactive,'lightweight',False)
         if local_activity:
             # A standalone calendar answer only depends on this question.
+            work.chat_context_cuts.add('standalone_question')
             history = [item for item in history if json.loads(item['content']).get('message_id') == request.message_id]
         elif quote_focus:
+            work.chat_context_cuts.add('quote_focus')
             focus_ids={request.message_id}
             if context_request.reference:focus_ids.add(context_request.reference['message_id'])
             history=[item for item in history if json.loads(item['content']).get('message_id') in focus_ids]
         elif topic_cutoff and work.proactive is None:
+            work.chat_context_cuts.add('topic_boundary')
             # An old assistant reply can carry the old summary as a retention source.
             # Keep the switch itself, the current turn and any explicit reference.
             rows=[(item,json.loads(item['content'])) for item in history]
@@ -1339,6 +1365,7 @@ class ChatAgent:
                 'note':'已送达引用；历史陈述本身不证明外部事实'},ensure_ascii=False)})
         try: persona,persona_reason=self.story.persona_selection() if self.story else (None,'story_not_configured')
         except (StoryError,OSError) as exc: raise ModelError('story_persona_unavailable') from exc
+        work.persona_reason=persona_reason
         runtime.backend.diagnostics.chat_event(work.request.request_id,'persona',runtime.backend.clock(),
             reason=persona_reason,persona_version=persona['persona_sha256'] if persona else PERSONA_VERSION)
         one_pass=light and request.conversation_id in self.proactive.one_pass_groups
@@ -1621,7 +1648,9 @@ class ChatAgent:
         initial_tools = [] if force_final or local_answer or local_activity or story_fact or just_evidence or draw_guarantee else (
             [registry[lookup].wire()] if lookup else [tool.wire() for tool in registry.values()])
         messages=self.initial_context(work,messages,initial_tools)
-        if (work.addressed_background and explicit_text and not (route or mechanic or has_quote
+        if observed_quote and not local_activity:
+            messages=self.with_addressed_context(work,messages,initial_tools,quoted_source=observed_quote)
+        elif (work.addressed_background and explicit_text and not (route or mechanic or has_quote
             or transition=='switch' or work.chat_task.goal or work.chat_additions or work.chat_addition_images)
                 and len(user_question)<=96 and '\n' not in user_question):
             messages=self.with_addressed_context(work,messages,initial_tools)
@@ -1651,6 +1680,9 @@ class ChatAgent:
             if 'derived_summary' in data:self.bind_memory(work,summary_rows)
             content=message['content']
             if data.pop('quote_preview',None) is not None:
+                content=json.dumps(data,ensure_ascii=False)
+            if observed_quote is not None and data.get('reply_to') == observed_quote.message_id:
+                data['reply_to'] = None
                 content=json.dumps(data,ensure_ascii=False)
             context.append({'role':message['role'],'content':content})
         if work.proactive is None and retain_turn:

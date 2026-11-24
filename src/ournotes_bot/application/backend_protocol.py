@@ -97,10 +97,11 @@ class Request:
             require(value['kind']=='group' and isinstance(value['proactive_id'],str) and re.fullmatch('[a-f0-9]{32}',value['proactive_id']),'proactive_identity')
         else:require(value['proactive_id']=='' and (value['trigger']!='observation' or value['kind']=='group'),'proactive_identity')
         ref, interaction = value['reference'], value['interaction']
-        if value['trigger'] == 'quoted_reply':
+        if value['trigger'] == 'quoted_reply' or ref is not None and value['trigger'] in ('observation','proactive'):
             require(isinstance(ref, dict) and set(ref) == {'message_id','adapter_profile_version'}
                     and identity(ref['message_id']) and identity(ref['adapter_profile_version'])
-                    and ref['adapter_profile_version'] in reference_profiles,
+                    and ref['adapter_profile_version'] in reference_profiles
+                    and ref['message_id'] != value['message_id'],
                     'reference_profile')
         else:
             require(ref is None, 'reference_shape')

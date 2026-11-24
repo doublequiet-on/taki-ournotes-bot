@@ -68,6 +68,7 @@ def _build_backend(args, settings, *, query_only, assert_recovery_current=None):
         backend = Backend(repository, parser, settings, instance_id=args.instance_id,
                           app_id=args.app_id, ledger_path=Path(args.state_dir)/'deliveries-v1.sqlite3',
                           diagnostics_enabled=diagnostics=='1',
+                          reference_profiles=() if query_only else ('qq-msg-idx-v1',),
                           code_files=QUERY_CODE_FILES if query_only else CODE_FILES, **capacities)
         if query_only:
             backend.query_runtime = QueryRuntime(backend)
