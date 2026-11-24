@@ -3920,6 +3920,10 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(users[-1]['speaker_id'],'u1')
         self.assertFalse(any(m['role']=='assistant' for m in bodies[0]['messages']))
         self.assertFalse(plan['reply_mention'])
+        events = self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        [provider] = [event['data'] for event in events if event['kind']=='provider_chat']
+        self.assertEqual(provider['context']['quote_previews'],1)
+        self.assertNotIn(quote,json.dumps(events,ensure_ascii=False))
         self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_story_relationship_infers_only_from_explicit_user_conditions(self):
@@ -5092,14 +5096,25 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         fixture.publish(fixture.bundle(kind='official_original',personas=True))
         self.client.request.return_value=self.result('我在听。')
-        for seq,(story,reason) in enumerate(((None,'story_not_configured'),(fixture.service,'approval_missing')),1):
+        current = fixture.service.current()
+        fixture.service.approve_persona('test-persona','fixture-human','fixture-confirmation',revision=current.revision)
+        updated = fixture.bundle(kind='official_original',personas=True)
+        updated['aliases']['鼓手'] = 'ドラマー'
+        fixture.publish(updated)
+        for seq,(story,reason) in enumerate(((None,'story_not_configured'),(fixture.service,'revision_mismatch')),1):
             self.backend.model_runtime.agent.story=story
-            plan,attempts=await self.prepare_native('/聊 这是本轮私有测试正文',seq=seq)
+            plan,attempts=await self.prepare_native('/聊 这是本轮私有测试正文[当前消息引用的文字预览；',seq=seq)
             self.assertEqual(len(attempts),1)
             self.assertEqual(plan['parts'][0]['business_status'],'success')
             events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
             self.assertEqual([row['data'] for row in events if row['kind']=='persona'],
                              [dict(reason=reason,persona_version=PERSONA_VERSION)])
+            [provider] = [row['data'] for row in events if row['kind']=='provider_chat']
+            self.assertEqual((provider['attempt_id'],provider['entry'],provider['transport']), (attempts[0],'addressed','native'))
+            self.assertEqual((provider['persona_reason'],provider['persona_version']), (reason,PERSONA_VERSION))
+            self.assertEqual(provider['context']['current'],1)
+            self.assertEqual(provider['context']['quote_previews'],0)
+            self.assertNotIn('本轮私有测试正文',json.dumps(events,ensure_ascii=False))
             self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_persona_read_failures_keep_original_error_without_default_diagnostic(self):
@@ -6071,6 +6086,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         plan,_,_=await self.candidate(newer,2)
         self.assertTrue(plan['send_allowed'])
         self.assertIn('先看第一部分',str(bodies));self.assertIn('再加一个限制',str(bodies))
+        [provider] = [e['data'] for e in self.backend.diagnostics.read(plan['request_id'])['chat_events']
+                      if e['kind']=='provider_chat']
+        self.assertEqual((provider['entry'],provider['stage'],provider['transport']),
+                         ('continuation','decision_and_generation','native'))
 
     async def test_conversation_settings_revoke_the_matching_lane(self):
         value=await self.continuation_fixture()
@@ -6314,15 +6333,29 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             self.assertTrue(visual['image_url'].startswith('data:image/png;base64,'))
             return await dispatch()
 
-        self.client.request.return_value = self.result(json.dumps(answer, ensure_ascii=False))
+        wire = []
+        async def respond(profile, body, **_):
+            wire.append((profile, json.loads(json.dumps(body))))
+            return self.result(json.dumps(answer, ensure_ascii=False))
+        self.client.request.side_effect = respond
         with patch.object(runtime.admin, 'hermes_route', return_value=True), patch.object(
                 runtime.hermes, 'request', side_effect=dispatch_worker):
             plan, attempts, _ = await self.candidate(value)
-        errors = [e['data'] for e in self.backend.diagnostics.read(plan['request_id'])['chat_events']
-                  if e['kind'] == 'error']
+        events = self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        errors = [e['data'] for e in events if e['kind'] == 'error']
         self.assertEqual(errors, [])
         self.assertEqual(len(attempts), 1)
         self.assertEqual(self.client.request.call_count, 1)
+        [provider] = [e['data'] for e in events if e['kind'] == 'provider_chat']
+        [(actual_profile, actual_body)] = wire
+        self.assertEqual((provider['entry'],provider['stage'],provider['transport']),
+                         ('proactive_image','decision_and_generation','hermes'))
+        self.assertEqual((provider['persona_reason'],provider['persona_version']), ('approved','a'*64))
+        self.assertEqual((provider['model'],provider['profile_version'],provider['output_limit']),
+                         (actual_body['model'],actual_profile.config_version,actual_body['max_output_tokens']))
+        self.assertEqual(provider['context']['images'], 1)
+        for private in ('已审核的群聊口吻','PRIVATE_PICTURE','base64,'):
+            self.assertNotIn(private,json.dumps(events,ensure_ascii=False))
         if decision == 'reply':
             self.assertTrue(plan['send_allowed'], plan)
             self.assertEqual(plan['parts'][0]['text'], answer['text'])
@@ -6456,8 +6489,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
         events=self.backend.diagnostics.read(plan['request_id'])
         self.assertEqual([e['kind'] for e in events['chat_events']],
-                         ['persona','image','context','attempt_timing','decision','finished'])
-        persona,image,context,timing,decision,_=events['chat_events']
+                         ['persona','image','context','attempt_timing','provider_chat','decision','finished'])
+        persona,image,context,timing,provider,decision,_=events['chat_events']
+        self.assertEqual((provider['data']['entry'],provider['data']['context']['images']),('proactive',0))
         self.assertEqual(timing['data']['lane'],'ordinary')
         self.assertEqual(persona['data'],dict(reason='story_not_configured',persona_version=PERSONA_VERSION))
         self.assertEqual(image['data']['status'],'image_not_available')
@@ -7603,7 +7637,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         from ournotes_bot.application.backend_protocol import Request,digest
         raw={**value,'trigger':'proactive','proactive_id':format(serial,'032x')}
         raw['request_id']=digest(['fixture','app','qq','group','g1',raw['user_id'],raw['message_id'],raw['proactive_id']])
-        request=Request.parse(raw,'fixture','app',self.now)
+        request=Request.parse(raw,'fixture','app',self.now,reference_profiles=self.backend.reference_profiles)
         candidate=self.agent.proactive.candidate(request)
         self.assertIsNotNone(candidate)
         plan=await self.backend.submit(raw,proactive=candidate);attempts=[]
@@ -8261,6 +8295,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item['attempt_id'] for item in detail['model_attempts']],attempts)
         self.assertEqual([e['data']['stage'] for e in detail['chat_events'] if e['kind']=='attempt_stage'],
                          ['decision','generation'])
+        providers = [e['data'] for e in detail['chat_events'] if e['kind']=='provider_chat']
+        self.assertEqual([(e['attempt_id'], e['entry'], e['stage'], e['output_limit']) for e in providers],
+                         [(attempts[0],'lightweight','decision',768),(attempts[1],'lightweight','generation',1024)])
+        self.assertTrue(all(e['context']['observed']==5 and e['context']['current']==1 for e in providers))
         with self.backend.diagnostics.db:
             self.backend.diagnostics.db.execute('DELETE FROM request_billing WHERE request_id=?',(plan['request_id'],))
         old_detail=self.backend.admin.view(self.backend.ledger.request(plan['request_id']),detail=True)
@@ -8295,8 +8333,13 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         for speaker, text, expected in cases:
             with self.subTest(text=text, speaker=speaker):
                 request = SimpleNamespace(attachments=(), body=text, user_id=speaker,
-                                          quoted_text='', quote_hint='')
+                                          quoted_text='', quote_hint='', reference=None)
                 self.assertEqual(_observation_turn(target, request, lightweight=True), expected)
+        preview = SimpleNamespace(attachments=(), body='先这样', user_id='u2',
+                                  quoted_text=target.text, quote_hint='', reference=None)
+        self.assertEqual(_observation_turn(target, preview), 'advance')
+        preview.reference = {'message_id': 'question'}
+        self.assertEqual(_observation_turn(target, preview), 'closed')
 
     async def test_lightweight_other_speaker_emoji_preserves_prepared_reply(self):
         self.enable_lightweight_fact_fixture()
@@ -8400,6 +8443,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(attempts),1 if one_pass else 2)
             wanted=['old-target','new-target'] if transition=='supplement' else ['new-target']
             self.assertEqual(ids,[wanted]*len(attempts))
+            provider = [event['data'] for event in self.backend.diagnostics.read(plan['request_id'])['chat_events']
+                        if event['kind']=='provider_chat']
+            self.assertEqual([event['stage'] for event in provider],
+                             ['decision_and_generation'] if one_pass else ['decision','generation'])
             self.event(plan,'intent');self.event(plan,'ack')
             self.assertEqual(self.backend.ledger.parts(plan['delivery_id'])[0]['status'],'success')
         finally:
@@ -8638,6 +8685,148 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_lightweight_input_budget_trims_reply_with_its_source(self):
         context, _, tail, current = await self.captured_lightweight_anchor('鼓'*1600,input_limit=14500)
         self.assertEqual([row['message_id'] for row in context],[*tail,current])
+
+    async def test_lightweight_ellipsis_recovers_same_id_across_same_name_interjections(self):
+        from ournotes_bot.application.backend_protocol import Request
+
+        self.enable_lightweight_fact_fixture()
+        self.save_conversation_settings(followup_enabled=False)
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        for seq, (speaker, text) in enumerate((
+            ('u1', '我昨天试着用左手打切分'),
+            ('u2', '昨天我捡到一把伞'),
+            ('u2', '哈哈'),
+            ('u2', '围观'),
+            ('u2', '笑死'),
+            ('u2', '路过'),
+            ('u2', '冒个泡'),
+            ('u1', '结果还是没撑到最后……'),
+        ), 1):
+            self.current_user = speaker
+            self.now += 1
+            self.tick += 1
+            current = self.request('ellipsis'+str(seq), seq)
+            current.update(body=text, trigger='observation', sender_name='同名')
+            self.agent.proactive.gateway_observation(Request.parse(current, 'fixture', 'app', self.now))
+        self.tick += 1.6
+        _, attempts, _ = await self.candidate(current)
+        self.assertEqual(len(attempts), 1)
+        rows = [json.loads(item['content']) for item in wire[0]['input'][1:]]
+        self.assertEqual((rows[0]['message_id'], rows[0]['speaker_id']), ('ellipsis1', 'u1'))
+        self.assertEqual((rows[-1]['message_id'], rows[-1]['speaker_id']), ('ellipsis8', 'u1'))
+        self.assertLessEqual(len(rows), 6)
+
+    async def test_addressed_verified_quote_uses_observed_source_and_keeps_leading_mentions(self):
+        self.enable_lightweight_fact_fixture()
+        self.backend.model_runtime.capabilities.generation=Mock(return_value='approved-chat-context')
+        self.backend.reference_profiles = {'fixture'}
+        source = self.observation('左手负责第八拍的切分')
+        self.now += 1
+        self.current_user = 'u2'
+        current = self.request('addressed-quote', 2)
+        current.update(trigger='quoted_reply', body='<@peer1> <@peer2> /聊 你怎么看',
+                       reference={'message_id':source['message_id'], 'adapter_profile_version':'fixture'},
+                       quoted_text='同名：预览内容')
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result('先看第八拍。')
+        with patch.object(self,'request',return_value=current):
+            plan, _ = await self.prepare_native(current['body'],seq=2)
+        self.assertTrue(plan['parts'], plan)
+        rows = [json.loads(item['content']) for item in wire[0]['input'] if item['role']=='user']
+        self.assertEqual((rows[-2]['message_id'], rows[-2]['speaker_id']), (source['message_id'],'u1'))
+        self.assertTrue(rows[-2]['observed_group_context'])
+        self.assertEqual((rows[-1]['reply_to'],rows[-1]['text']),
+                         (source['message_id'],'<@peer1> <@peer2> 你怎么看'))
+        self.assertNotIn('quote_preview', rows[-1])
+        self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.backend.model_runtime.capabilities.generation.return_value='revoked-chat-context'
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+
+    async def test_lightweight_verified_reply_keeps_chain_in_model_request(self):
+        from ournotes_bot.application.backend_protocol import Request
+
+        self.enable_lightweight_fact_fixture()
+        self.save_conversation_settings(followup_enabled=False)
+        self.backend.reference_profiles = {'fixture'}
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        options = [
+            ('u1', '明天用左手打切分', None),
+            ('u2', '这两下分开打比较顺', 'quote1'),
+            *[('u3', text, None) for text in ('哈', '围观', '笑死', '路过', '冒个泡', '我先走')],
+            ('u2', '我想再试一遍 <@peer2> <@peer3>', 'quote2'),
+        ]
+        for seq, (speaker, text, target) in enumerate(options, 1):
+            self.current_user = speaker
+            self.now += 1
+            self.tick += 1
+            current = self.request('quote'+str(seq), seq)
+            current.update(body=text, trigger='observation', sender_name='同名')
+            if target:
+                current.update(reference={'message_id':target, 'adapter_profile_version':'fixture'},
+                               quoted_text='相同的引用预览')
+            parsed = Request.parse(current, 'fixture', 'app', self.now,
+                                   reference_profiles=self.backend.reference_profiles)
+            self.agent.proactive.gateway_observation(parsed)
+        self.tick += 1.6
+        _, attempts, _ = await self.candidate(current)
+        self.assertEqual(len(attempts), 1)
+        rows = [json.loads(item['content']) for item in wire[0]['input'][1:]]
+        self.assertEqual([(row['message_id'], row['speaker_id'], row['reply_to'])
+                          for row in [*rows[:2], rows[-1]]],
+                         [('quote1','u1',None), ('quote2','u2','quote1'), ('quote9','u2','quote2')])
+        self.assertTrue(rows[-1]['text'].endswith('<@peer2> <@peer3>'))
+        self.assertNotIn('相同的引用预览', json.dumps(rows, ensure_ascii=False))
+
+    async def check_lightweight_old_topic_boundary(self, *, closing=None, elapsed=1):
+        self.enable_lightweight_fact_fixture()
+        self.save_conversation_settings(followup_enabled=False)
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        first = self.observation('我昨天试着用左手打切分')
+        self.now += 1
+        self.tick += 1
+        if closing:
+            self.observation(closing, seq=2)
+        self.now += elapsed
+        self.tick += elapsed
+        current = self.observation('结果我还是没撑到最后……', seq=3)
+        self.tick += 1.6
+        await self.candidate(current)
+        rows = [json.loads(item['content']) for item in wire[0]['input'][1:]]
+        self.assertNotIn(first['message_id'], {row['message_id'] for row in rows})
+        self.assertEqual(rows[-1]['message_id'], current['message_id'])
+
+    async def test_lightweight_context_does_not_cross_closed_topic(self):
+        await self.check_lightweight_old_topic_boundary(closing='先这样')
+
+    async def test_lightweight_context_does_not_cross_explicit_new_topic(self):
+        await self.check_lightweight_old_topic_boundary(closing='换个话题，今天想练手速')
+
+    async def test_lightweight_context_does_not_include_expired_observation(self):
+        await self.check_lightweight_old_topic_boundary(elapsed=301)
+
+    async def test_lightweight_uses_preparation_time_to_expire_late_observations(self):
+        from ournotes_bot.application.backend_protocol import Request
+
+        self.enable_lightweight_fact_fixture()
+        self.save_conversation_settings(followup_enabled=False)
+        self.client.request.return_value = self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        wire = ChatAgentTests.capture_native_bodies(self)
+        def observe(mid, seq, age, body):
+            row = self.request(mid, seq)
+            row.update(body=body, trigger='observation', timestamp_ms=int((self.now-age)*1000))
+            self.agent.proactive.gateway_observation(Request.parse(row,'fixture','app',self.now))
+            return row
+        observe('old-at-prepare', 1, 289, '我试过用左手打切分')
+        self.now += 22
+        self.tick += 22
+        current = observe('late-current', 2, 25, '结果还是没撑到最后……')
+        self.tick += 1.6
+        await self.candidate(current)
+        rows = [json.loads(item['content']) for item in wire[0]['input'][1:]]
+        self.assertEqual([row['message_id'] for row in rows], ['late-current'])
 
     def filtered_group_observation(self, text, seq, *, timestamp_ms=None):
         raw = self.request('filtered'+str(seq), seq)

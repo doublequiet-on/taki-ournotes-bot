@@ -37,6 +37,53 @@ from .chat_jobs import ServiceError, lightweight_profile, uses_proactive_day_acc
 
 logger=logging.getLogger('ournotes_bot.model_transport')
 
+CHAT_TEMPLATE_VERSION = 'agent-chat/1'
+
+
+def provider_chat_context(body, work):
+    """Count sources in the serialized wire shape without retaining their payloads."""
+    current = work.request.message_id
+    observed = {row.message_id for row in work.proactive.messages} if work.proactive is not None else set()
+    counts = dict(current=0, observed=0, history=0, delivered=0, summary=0,
+                  quote_previews=0, referenced_display=0, images=0, tool_results=0, visible_replies=0)
+    ids, replies = set(), []
+    for item in body.get('input', body.get('messages', [])):
+        role = item.get('role')
+        if role == 'tool' or item.get('type') == 'function_call_output':
+            counts['tool_results'] += 1
+        if role not in ('user', 'assistant'):
+            continue
+        content = item.get('content')
+        if isinstance(content, list):
+            counts['images'] += sum(part.get('type') == 'input_image' for part in content)
+            content = next((part.get('text') for part in content if part.get('type') == 'input_text'), None)
+        if not isinstance(content, str) or not content.startswith('{'):
+            continue
+        try:
+            row = json.loads(content)
+        except (ValueError, RecursionError):
+            continue
+        if 'derived_summary' in row:
+            counts['summary'] += 1
+        if 'delivered_display' in row:
+            counts['referenced_display'] += 1
+        mid = row.get('message_id')
+        if 'quote_preview' in row or 'quoted_text' in row or (
+                mid == current and work.chat_inline_quote_preview and isinstance(row.get('text'), str)
+                and '[当前消息引用的文字预览；' in row['text']):
+            counts['quote_previews'] += 1
+        if not isinstance(mid, str):
+            continue
+        ids.add(mid)
+        if isinstance(row.get('reply_to'), str):
+            replies.append(row['reply_to'])
+        source = ('delivered' if role == 'assistant' else 'current' if mid == current else
+                  'observed' if mid in observed or row.get('observed_group_context') else 'history')
+        counts[source] += 1
+    counts['visible_replies'] = sum(target in ids for target in replies)
+    return counts
+
+
 PERSONA = '''你是 Taki，一个以椎名立希为原型的独立查询助手。简体中文，直率认真，简洁、友善，可轻微吐槽，不羞辱玩家。
 围绕用户当前问题表达：先直接给结论或能提供的帮助，再补必要依据、条件和下一步；不复述检索过程，不主动扩展到无关问题。默认用完整陈述自然收尾。用户补充了上一问的答案时，把新信息用进回应，不再接力盘问。普通吐槽不自动转成劝休息、布置任务或操作建议。只有当前请求确实缺少必要信息时才问一个具体问题，或按用户明确要求提问。
 按话题需要展开：闲聊接住话题后可补充想法或理由，不总压成一两句；认真讨论讲清判断、理由和必要例子，追问回应具体疑点，没懂就换种说法。不凑字数，不重复已说清的内容。用具体事实和自然短句，不加自我免责、能力声明或自我否定的铺垫，不反复道歉或添加“作为AI”“仅供参考”“遗憾的是”等套话；不刻意用“虽然……但是”削弱已有结论，也不靠夸张或讨好增强语气。
@@ -240,9 +287,10 @@ class ModelRuntime:
     def is_chat(self,content):
         if self.agent is None or getattr(self.backend.settings,'chat_engine','legacy')!='agent': return False
         if replies.explicit_chat(content): return True
-        if replies.is_ai_request(content): return False
-        return bool(content.strip() and not content.lstrip().startswith(('/', '／'))
-                    and not replies.recognizes_message(content))
+        command = replies.command_text(content)
+        if replies.is_ai_request(command): return False
+        return bool(content.strip() and not command.startswith(('/', '／'))
+                    and not replies.recognizes_message(command))
 
     def capture(self,work):
         try:
@@ -252,7 +300,7 @@ class ModelRuntime:
             if work.model_snapshot.fingerprint:
                 self.usage.configuration(work.model_snapshot.profile.config_version,work.model_snapshot.fingerprint)
             work.model_subject=work.model_snapshot.subject(work.request)
-            if work.addressed_background:
+            if work.addressed_background or (work.chat and work.missing_anchor and work.request.kind=='group'):
                 self.agent.proactive.capture_addressed_context(work)
         except ModelError as exc: work.model_error=str(exc)
 
@@ -367,7 +415,8 @@ class ModelRuntime:
     async def prepare(self,work,content):
         question=query_text(content)
         if getattr(work,'chat',False):
-            return await self.prepare_chat(work,re.sub(r'^[/／]聊(?:\s+|$)', '', content.strip()).strip() if replies.explicit_chat(content) else content.strip())
+            question = replies.chat_command(content)
+            return await self.prepare_chat(work, content.strip() if question is None else question)
         if not question or len(question)>500:
             return replies.PreparedReply('用法：/查 <问题>，最多 500 字。',business_status='invalid_argument')
         try:
@@ -541,6 +590,41 @@ class ModelRuntime:
         if check_bound:
             require(bound<=profile.max_input_tokens,'model_input_too_large')
         return profile,body,bound
+
+    def trace_provider_chat(self, work, attempt, profile, body, bound, light, web):
+        proactive = work.proactive
+        schema = body.get('text', {}).get('format', {}).get('name')
+        if web is not None:
+            entry, stage = 'public_search', 'lookup'
+        else:
+            if light:
+                entry = 'lightweight'
+            elif schema == 'proactive_one_pass':
+                entry = 'proactive_image'
+            elif work.continuation or getattr(proactive, 'followup', None) is not None:
+                entry = 'continuation'
+            else:
+                entry = 'proactive' if proactive is not None else 'addressed'
+            if schema == 'proactive_participation':
+                stage = 'decision'
+            elif schema == 'proactive_one_pass' or (
+                    proactive is not None and not getattr(work, 'proactive_generation', False) and schema is None):
+                stage = 'decision_and_generation'
+            else:
+                stage = 'tools_available' if body.get('tools') else 'generation'
+        self.backend.diagnostics.chat_event(work.request.request_id, 'provider_chat', self.backend.clock(),
+            attempt_id=attempt, trigger=work.request.trigger, entry=entry, stage=stage,
+            transport='hermes' if work.hermes_chat and not work.hermes_native_fallback else 'native',
+            persona_reason=work.persona_reason if web is None else 'not_used',
+            persona_version=(None if web is not None else work.persona_version.rsplit('/', 1)[-1]
+                             if work.persona_reason == 'approved' else work.persona_version),
+            template_version=CHAT_TEMPLATE_VERSION, provider=profile.provider, wire_profile=profile.wire_profile,
+            model=body['model'], profile_version=profile.config_version,
+            reasoning_effort=body.get('reasoning', {}).get('effort', body.get('reasoning_effort')),
+            output_limit=next(body[key] for key in ('max_output_tokens', 'max_completion_tokens', 'max_tokens')
+                              if key in body),
+            input_bound=bound, input_limit=profile.max_input_tokens,
+            context=provider_chat_context(body, work), cuts=sorted(work.chat_context_cuts) if web is None else [])
 
     async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None,billing_request_id=None,service_policy=None,visual_one_pass=False):
         profile=work.model_snapshot.profile
@@ -716,6 +800,8 @@ class ModelRuntime:
                      'billing_incomplete':bool(recorded['billing_incomplete']),
                      'elapsed_ms':int((time.monotonic()-began)*1000)})
             self.usage.observe(attempt,kind,min(3600000,int((time.monotonic()-began)*1000)))
+            if 'http_start' in marks and getattr(work, 'persona_reason', None) is not None and service_policy is None:
+                self.trace_provider_chat(work, attempt, profile, body, bound, light, web)
             body.clear()  # No prompt/response state retained by the runtime owner.
 
     async def run(self,work,question,history,leases,user,group,deadline,*,query_only=False):

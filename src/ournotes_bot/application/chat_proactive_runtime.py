@@ -65,6 +65,8 @@ def _observation_turn(target, request, *, lightweight=False):
         return 'waiting'
     if lightweight and text == '已经有人回答了':
         return 'answered'
+    if lightweight and target is None and _TURN_CLOSED.fullmatch(text):
+        return 'closed'
     if (lightweight and _REACTION_EMOJI.fullmatch(text) and (target is None or request.user_id != target.speaker_id)
             and not (request.reference or request.quoted_text or request.quote_hint)):
         return 'interjection'
@@ -72,12 +74,13 @@ def _observation_turn(target, request, *, lightweight=False):
         return 'advance'
     previous = _echo_key(target.text)
     same_speaker = request.user_id == target.speaker_id
-    quoted = bool(not lightweight and previous and _echo_key(request.quoted_text) == previous)
+    quoted = bool(request.reference and request.reference['message_id'] == target.message_id)
     if _TURN_CLOSED.fullmatch(text) and (same_speaker or quoted or text == '已经有人回答了'):
         return 'closed'
     if not same_speaker and _ANSWER.match(text) and quoted:
         return 'closed'
-    if not same_speaker and not request.quoted_text and not request.quote_hint and _INTERJECTION.fullmatch(text):
+    if (not same_speaker and not (request.reference or request.quoted_text or request.quote_hint)
+            and _INTERJECTION.fullmatch(text)):
         return 'interjection'
     if _SUPPLEMENT.match(text) and (same_speaker or quoted):
         return 'supplement'
@@ -326,6 +329,7 @@ class ProactiveChat:
         if request.kind!='group' or request.policy.natural_query!='model':return False
         try:
             scope=self.scope(request);settings=self.settings(request.conversation_id)
+            reply_to = request.reference['message_id'] if request.reference else None
             if not self.agent.store.source_valid(request.scope,request.message_id,request.timestamp_ms):return False
             owner=self.continuation_owner(scope)
             self.followups.observe(scope,request.user_id,request.message_id,request.timestamp_ms,request.ingress_seq,request.gateway_epoch)
@@ -360,7 +364,8 @@ class ProactiveChat:
                                 active.chat_addition_images+= (request.message_id,)
                             except ImageError as exc:
                                 active.chat_addition_image_error=exc.code
-                        active.chat_additions+= (ChatMessage(request.message_id,request.user_id,request.body,request.timestamp_ms,display_name=request.sender_name),)
+                        active.chat_additions+= (ChatMessage(request.message_id,request.user_id,request.body,
+                            request.timestamp_ms,reply_to=reply_to,display_name=request.sender_name),)
                         active.chat_coalesce_until=min(time.monotonic()+settings['coalesce_seconds'],active.chat_coalesce_deadline)
                         self.control_event(request,'supplement_merged')
                     return False
@@ -387,7 +392,8 @@ class ProactiveChat:
                 snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
                 policy=self.configured(request,snapshot)
                 lightweight = self.uses_lightweight(request.conversation_id, snapshot.profile, policy)
-                if lightweight and (excluded or request.reference or request.quote_hint or request.quoted_text):
+                if lightweight and (excluded or (not reply_to and (request.quote_hint or request.quoted_text))
+                                    or request.quote_hint == 'image'):
                     # The ingress can carry an older platform timestamp than already saved chat.
                     self.controller.mark_context_gap(scope, int(self.agent.runtime.backend.clock() * 1000))
                     if not excluded:
@@ -400,14 +406,14 @@ class ProactiveChat:
                     self.control_event(request,status);return False
             target = None if lightweight and ingress_gap else self.controller.target(scope)
             turn = 'advance' if followup is not None else _observation_turn(target, request, lightweight=lightweight)
-            if lightweight and (ingress_gap or request.attachments or turn == 'shift'):
+            if lightweight and (ingress_gap or request.attachments or turn in ('shift','closed','answered')):
                 self.controller.mark_context_gap(scope, int(self.agent.runtime.backend.clock() * 1000))
                 if ingress_gap:
                     self.control_event(request, 'proactive_ingress_gap')
             if request.attachments:
                 self.agent.images.remember(self.agent.image_scope(request),request.message_id,request.user_id,request.timestamp_ms,request.attachments)
             observed = self.controller.observe(scope,ChatMessage(request.message_id,request.user_id,
-                request.body,request.timestamp_ms,display_name=request.sender_name),
+                request.body,request.timestamp_ms,reply_to=reply_to,display_name=request.sender_name),
                 turn='advance' if turn=='shift' else turn,
                 image=bool(request.attachments),
                 plain_text=not (request.attachments or request.reference or request.quote_hint or request.quoted_text
@@ -476,8 +482,9 @@ class ProactiveChat:
         profile = snapshot.profile
         scope = self.scope(request)
         lightweight = not continuation and self.uses_lightweight(request.conversation_id, profile, policy)
-        if lightweight and (not request.body.strip() or request.attachments or request.reference
-                            or request.quote_hint or request.quoted_text or replies.is_ai_request(request.body)
+        if lightweight and (not request.body.strip() or request.attachments or request.quote_hint == 'image'
+                            or not request.reference and (request.quote_hint or request.quoted_text)
+                            or replies.is_ai_request(request.body)
                             or _WEB_URL.search(unicodedata.normalize('NFKC', request.body))):
             self.control_event(request,'chat_service_lightweight_skip')
             return None
@@ -582,7 +589,9 @@ class ProactiveChat:
                 self.control_event(request, 'proactive_candidate_stale')
             return None
         last=candidate.messages[-1]
-        if (last.message_id,last.speaker_id,last.text,last.timestamp_ms)!=(request.message_id,request.user_id,request.body,request.timestamp_ms):
+        reply_to = request.reference['message_id'] if request.reference else None
+        if (last.message_id,last.speaker_id,last.text,last.timestamp_ms,last.reply_to) != (
+                request.message_id,request.user_id,request.body,request.timestamp_ms,reply_to):
             self.controller.cancel(self.scope(request));return None
         followup=self.followups.match(self.scope(request),request.message_id)
         if followup is not None:candidate=replace(candidate,followup=followup,continuation=True)
@@ -667,6 +676,15 @@ class ProactiveChat:
             work.addressed_context_grant = None
         if work.addressed_context_grant is None:
             work.addressed_background = ()
+
+    def addressed_quote_source(self, work):
+        request = work.request
+        if work.addressed_context_grant is None or not work.missing_anchor or work.proactive is not None:
+            return None
+        source = self.controller.addressed_quote(self.scope(request), request.reference['message_id'])
+        if source and self.addressed_context_sources_valid(request, (source,)):
+            return source
+        return None
 
     def addressed_context_sources_valid(self, request, rows):
         excluded = {row['user_id'] for row in self.settings(request.conversation_id)['excluded_users']}
@@ -770,7 +788,11 @@ class ProactiveChat:
         current = rows[-1]
         ack_by_source = _ack_by_source(saved, current.timestamp_ms)
         prior = []
+        cutoff = int((self.agent.runtime.backend.clock() - 300) * 1000)
         for row in rows[:-1]:
+            if row.timestamp_ms <= cutoff:
+                work.chat_context_cuts.add('expired')
+                continue
             if row.message_id in addressed:
                 row = _confirmed_addressed_source(row, saved, ack_by_source)
                 if row is None:
@@ -793,6 +815,8 @@ class ProactiveChat:
                 scene.append(ack)
         scene.append(current)
         selected, anchored = select_topic_context(scene, limit=5 if image_id else 6)
+        if len(selected) < len(scene):
+            work.chat_context_cuts.add('selection')
         visible = {row.message_id for row in selected}
         selected = [row for row in selected if row.role == 'user' or row.reply_to in visible]
         self.trace(work, 'control', status='proactive_context_anchor' if anchored else 'proactive_context_recent',
@@ -851,6 +875,7 @@ class ProactiveChat:
         while rows and (len(rows)>48 or sum(len(json.dumps(asdict(row),ensure_ascii=False).encode()) for row in rows)>24576):
             index=next((i for i,row in enumerate(rows) if row.message_id not in protected),0)
             rows.pop(index)
+            work.chat_context_cuts.add('history_budget')
         self.agent.bind_memory(work,[asdict(row) for row in rows if row.message_id in saved])
         messages=[]
         if followup:
@@ -860,7 +885,7 @@ class ProactiveChat:
                 followup.delivered_ms,'assistant',followup.source_id)),ensure_ascii=False)})
         for row in rows:
             value=asdict(row)
-            if row.message_id==work.request.message_id and work.request.quoted_text:
+            if row.message_id==work.request.message_id and work.request.quoted_text and not row.reply_to:
                 value['quoted_text']=work.request.quoted_text
                 value['quote_status']='用户提供的引用预览，原作者和原消息身份未经核验'
             try:ref=self.agent.images.get(self.agent.image_scope(work.request),row.message_id)

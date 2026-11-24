@@ -64,7 +64,7 @@ export interface Ready {
   protocol: typeof protocol; ready: boolean; capability: typeof capability
   execution_profile: 'personal-v1' | 'query-local-v1'
   backend_epoch: string; backend_code_digest: string; notices_enabled: boolean; diagnostics_enabled: boolean
-  features: string[]; management_capabilities: string[]
+  features: string[]; management_capabilities: string[]; reference_profiles: string[]
 }
 export function decodeReady(value: unknown): Ready {
   const v = object(value, 'ready_shape')
@@ -74,7 +74,8 @@ export function decodeReady(value: unknown): Ready {
     capability:choice(v.capability,[capability],'incompatible_backend'), backend_epoch:hex(v.backend_epoch,32,'ready_shape'),
     backend_code_digest:hex(v.backend_code_digest,64,'ready_shape'), notices_enabled:boolean(v.notices_enabled,'ready_shape'),
     diagnostics_enabled:boolean(v.diagnostics_enabled,'ready_shape'), features:strings(v.features,'ready_shape'),
-    management_capabilities:strings(v.management_capabilities,'ready_shape') }
+    management_capabilities:strings(v.management_capabilities,'ready_shape'),
+    reference_profiles:v.reference_profiles === undefined ? [] : strings(v.reference_profiles,'ready_shape') }
   const shared = ['classify','gateway_retire','ack_context_guard','quoted_context_v1','fixed_snapshot_v1','independent_delivery_v1']
   requireWire(result.management_capabilities.includes('group_policies_v1') && shared
     .every(feature => result.features.includes(feature)), 'incompatible_backend')
@@ -89,7 +90,10 @@ export function decodeReady(value: unknown): Ready {
   return result
 }
 export function decodeClassify(value: unknown): boolean { return boolean(object(value,'classify_shape').recognized,'classify_shape') }
-export function decodeDirectChat(value: unknown): boolean { return boolean(object(value,'classify_shape').direct_chat,'classify_shape') }
+export function decodeDirectChat(value: unknown, addressed = false): boolean {
+  const result = object(value,'classify_shape')
+  return boolean(addressed ? result.chat : result.direct_chat,'classify_shape')
+}
 export interface ModelPermission {
   request_id: string; attempt_id: string; nonce: string; user_id: string
   backend_epoch: string; gateway_epoch: string; scope: Record<string,string>

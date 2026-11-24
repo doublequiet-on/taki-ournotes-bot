@@ -34,12 +34,28 @@ from ..visuals import (render_card, render_card_list, render_chart, render_song_
 logger = logging.getLogger("ournotes_bot.replies")
 
 
+_MENTION_TAG = re.compile(r"<@!?[\w-]+>")
+_CHAT_COMMAND = re.compile(r"^((?:<@!?[\w-]+>\s*)*)[/／]聊(?:\s+|$)")
+
+
+def command_text(content: str) -> str:
+    return _MENTION_TAG.sub('', content).strip()
+
+
+def chat_command(content: str) -> str | None:
+    text = content.strip()
+    match = _CHAT_COMMAND.match(text)
+    if match:
+        return ' '.join(part for part in (match[1].strip(),text[match.end():].strip()) if part)
+    return None
+
+
 def explicit_chat(content: str) -> bool:
-    return bool(re.match(r"^[/／]聊(?:\s|$)", content.strip()))
+    return chat_command(content) is not None
 
 
 def named_chat(content: str) -> bool:
-    text = content.strip()
+    text = command_text(content)
     return bool(text and not text.startswith(('/', '／')) and not recognizes_message(text) and
                 ('立希' in text or re.search(r'(?<![A-Za-z0-9_])taki(?![A-Za-z0-9_])', text, re.I)))
 
