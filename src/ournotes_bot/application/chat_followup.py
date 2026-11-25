@@ -25,6 +25,7 @@ class Question:
     window: float = 180
     observed_ids: tuple = ()
     request_id: str = ''
+    prior_exchange_ids: tuple = ()
 
 
 class Followups:
@@ -74,13 +75,14 @@ class Followups:
             self._remove(old)
         return generation
 
-    def delivered(self, scope, generation, user_id, source_id, source_text, source_reply_to, source_display_name, source_time, source_seq, gateway_epoch, message_id, text, delivered_ms, *, window=None, request_id=''):
+    def delivered(self, scope, generation, user_id, source_id, source_text, source_reply_to, source_display_name, source_time, source_seq, gateway_epoch, message_id, text, delivered_ms, *, window=None, request_id='', prior_exchange_ids=()):
         self.sweep();key=(scope,user_id)
         expected=self.generations.get(key,self.generations.get((scope,None)))
         if (expected!=generation or not user_id or not message_id or not text.strip()
                 or len(text.encode())>4096 or len(source_text.encode())>4096):return
         self._set(key,Question(user_id,source_id,source_text,source_reply_to,source_display_name,source_time,source_seq,gateway_epoch,
-            message_id,text,self.clock(),generation,delivered_ms,window=window or self.window,request_id=request_id))
+            message_id,text,self.clock(),generation,delivered_ms,window=window or self.window,request_id=request_id,
+            prior_exchange_ids=prior_exchange_ids))
         while len(self.questions)>self.capacity:self._remove(next(iter(self.questions)))
 
     def observe(self, scope, user_id, message_id, timestamp_ms, ingress_seq, gateway_epoch):

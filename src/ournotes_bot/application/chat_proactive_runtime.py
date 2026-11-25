@@ -710,7 +710,7 @@ class ProactiveChat:
             content+='\n\n同一用户随后补充：\n'+'\n'.join(row.text for row in work.chat_additions)
         return content
 
-    def remember_question(self,work,message_id,text):
+    def remember_question(self,work,message_id,text,business_status=None):
         if not work.chat or work.request.kind!='group':return
         try:
             settings=self.settings(work.request.conversation_id)
@@ -722,7 +722,9 @@ class ProactiveChat:
             original=originals[0]
             self.followups.delivered(self.scope(work.request),generation,
                 work.request.user_id,work.request.message_id,original['text'],original['reply_to'],original['display_name'],original['timestamp_ms'],work.request.ingress_seq,work.request.gateway_epoch,message_id,text,
-                int(self.agent.runtime.backend.clock()*1000),window=settings['followup_window_seconds'],request_id=work.request.request_id)
+                int(self.agent.runtime.backend.clock()*1000),window=settings['followup_window_seconds'],request_id=work.request.request_id,
+                prior_exchange_ids=work.prior_exchange_ids if work.proactive is None and business_status in
+                ('chat_hermes_busy','provider_unavailable') else ())
             group=self.controller.groups.get(self.scope(work.request))
             if group and group.opportunity is not None and work.proactive is None:
                 group.opportunity.knowledge_leases.clear();group.opportunity=None
@@ -888,6 +890,12 @@ class ProactiveChat:
         self.agent.bind_memory(work,[asdict(row) for row in rows if row.message_id in saved])
         messages=[]
         if followup:
+            if followup.prior_exchange_ids:
+                prior=self.agent.store.read(work.request.scope,followup.prior_exchange_ids)['messages']
+                excluded={row['user_id'] for row in self.settings(work.request.conversation_id)['excluded_users']}
+                if len(prior)==2 and all(row['speaker_id'] not in excluded for row in prior):
+                    self.agent.bind_memory(work,prior)
+                    messages.extend({'role':row['role'],'content':json.dumps(row,ensure_ascii=False)} for row in prior)
             messages.append({'role':'user','content':json.dumps(asdict(ChatMessage(followup.source_id,followup.user_id,followup.source_text,
                 followup.source_time,reply_to=followup.source_reply_to,display_name=followup.source_display_name)),ensure_ascii=False)})
             messages.append({'role':'assistant','content':json.dumps(asdict(ChatMessage(followup.message_id,'Taki',followup.text,

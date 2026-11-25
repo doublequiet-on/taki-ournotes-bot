@@ -115,6 +115,7 @@ class Work:
     service_policy: object = None
     service_request_id: str = ''
     participating_history: tuple = ()
+    prior_exchange_ids: tuple = ()
     participation: str = ''
     addressed_registered: bool = False
     proactive_delivered: bool = False
@@ -812,7 +813,7 @@ class Backend:
                         record_delivery=projection is None)
                     if (payload['result']=='success' and len(parts)==1+int(work.hint)
                             and payload.get('allow_context') is not False):
-                        self.model_runtime.agent.proactive.remember_question(work,payload['message_id'],reply.text)
+                        self.model_runtime.agent.proactive.remember_question(work,payload['message_id'],reply.text,reply.business_status)
                 if payload['result'] == 'success':
                     if long_fallback: candidate = replies.fallback_cursor(reply,text_limit=text_limit)
                     if candidate is not None and (work.operation or len(split_commands(work.request.body)) == 1
