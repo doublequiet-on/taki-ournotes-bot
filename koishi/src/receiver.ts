@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Context, Session, Channel, User } from 'koishi'
 import type { QQBot } from '@satorijs/adapter-qq'
 import { BackendClient, BackendError, Plan, ModelPermission, AbortReason } from './backend'
-import { decodeIncoming, Identity, Inbound, pairId } from './ingress'
+import { decodeIncoming, Identity, Inbound, pairId, quoteReferenceProfile } from './ingress'
 import { QQDelivery, QQInternal, type Outcome } from './delivery'
 import { Notices } from './notices'
 import { MaterialStore, materialRequest } from './materials'
@@ -89,6 +89,7 @@ export class Receiver {
   private flights = new Map<string, Flight>()
   private observations = new Map<string, Observation>()
   private observedIds = new Map<string,number>()
+  private quoteSources = new Map<string,{messageId: string | null; at: number; seq: number}>()
   private observationTasks = new Set<Observation>()
   private groupArrivals = new Map<string,{seq:number;backendSeq:number;at:number;addressedSeq:number}>()
   private speakerArrivals = new Map<string,{seq:number;at:number}>()
@@ -120,6 +121,7 @@ export class Receiver {
     const now=Date.now()
     for(const [key,value] of this.raw) if(now-value.at>=298000)this.raw.delete(key)
     for(const [key,at] of this.observedIds)if(now-at>=298000)this.observedIds.delete(key)
+    for (const [key,source] of this.quoteSources) if (now-source.at>=298000) this.quoteSources.delete(key)
     for(const [key,value] of this.groupArrivals)if(now-value.at>=298000)this.groupArrivals.delete(key)
     for(const [key,value] of this.speakerArrivals)if(now-value.at>=298000)this.speakerArrivals.delete(key)
     for(const task of this.observations.values()) if(!this.observationAlive(task))this.cancelObservation(task.key,this.observationStopReason(task))
@@ -128,6 +130,25 @@ export class Receiver {
     return JSON.stringify([this.config.instanceId,this.config.appId,'qq','group',group])
   }
   private speakerKey(group:string,user:string):string { return JSON.stringify([this.groupKey(group),user]) }
+  private quoteReference(input: Inbound, source: Raw): Inbound['reference'] | undefined {
+    if (input.kind !== 'group' || !this.client.readiness?.reference_profiles?.includes(quoteReferenceProfile)) return
+    const key = (index: string) => JSON.stringify([input.conversationId,index])
+    const quoted = input.quotedIndex ? this.quoteSources.get(key(input.quotedIndex)) : undefined
+    if (input.ownQuoteIndex) {
+      const ownKey = key(input.ownQuoteIndex)
+      const previous = this.quoteSources.get(ownKey)
+      if (!previous || source.at-previous.at>=298000) {
+        this.quoteSources.set(ownKey, { messageId:input.messageId, at:source.at, seq:source.seq })
+      } else if (previous.messageId!==input.messageId) {
+        this.quoteSources.set(ownKey, { messageId:null, at:source.at, seq:source.seq })
+      }
+      while (this.quoteSources.size>2048) this.quoteSources.delete(this.quoteSources.keys().next().value!)
+    }
+    if (quoted?.messageId && quoted.messageId!==input.messageId && input.ownQuoteIndex!==input.quotedIndex
+        && quoted.seq<source.seq && source.at-quoted.at<298000) {
+      return {message_id:quoted.messageId, adapter_profile_version:quoteReferenceProfile}
+    }
+  }
   private latestObservation(input:Inbound,seq:number,continuation:boolean):boolean {
     return (continuation?this.speakerArrivals.get(this.speakerKey(input.conversationId,input.userId))
       :this.groupArrivals.get(this.groupKey(input.conversationId)))?.seq===seq
@@ -274,7 +295,7 @@ export class Receiver {
     }
     const now = Date.now()
     for (const [key, value] of this.raw) if (now - value.at > 298000) this.raw.delete(key)
-    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions, data.attachments, data.message_type, data.msg_elements])
+    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions, data.attachments, data.message_type, data.msg_elements, data.message_scene])
     const existing = this.raw.get(data.id)
     if (existing) {
       // Do not let a conflicting raw event replace the first identity/body while decode is waiting.
@@ -367,7 +388,9 @@ export class Receiver {
       await previous
       if (!this.active) { this.observed('disposed'); return true }
       if (source.conflict) { this.observed('conflict'); return true }
-      const decoded = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true,true)
+      const queryLocal = this.client.readiness?.execution_profile === 'query-local-v1'
+      const decoded = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true,true,
+        !queryLocal)
       if (decoded.status !== 'accepted') { this.observed(decoded.status === 'ignored' ? 'decode_ignored' : 'decode_rejected'); return false }
       input=decoded.inbound
       if(this.config.management?.inScope && !this.config.management.inScope(input)){this.observed('management_denied');return false}
@@ -376,15 +399,26 @@ export class Receiver {
       if (!this.ctx.filter(canonical)) { this.observed('scope_denied'); return false }
       await this.ready
       if (!this.active) { this.observed('disposed'); return true }
-      if (decoded.inbound.trigger!=='observation' && (!decoded.inbound.attachments?.length || /^[/／]/u.test(decoded.inbound.body))
-          && !await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
-      if(input.trigger==='observation' && await this.client.directChat(input.body)) {
-        input={...input,trigger:'command'}
+      if (!queryLocal && this.client.readiness?.execution_profile === 'query-local-v1' && input.trigger !== 'observation') {
+        const legacy = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true,true,false)
+        if (legacy.status !== 'accepted') { this.observed(legacy.status === 'ignored' ? 'decode_ignored' : 'decode_rejected'); return false }
+        input=legacy.inbound
       }
+      if (input.trigger!=='observation' && (!input.attachments?.length || /^[/／]/u.test(input.body))
+          && !await this.client.recognizes(input.body)) { this.observed('unrecognized'); return false }
+      const directChat = input.trigger==='observation' && await this.client.directChat(input.body)
+      if(directChat) input={...input,trigger:'command'}
       if (!this.active) { this.observed('disposed'); return true }
       if (!await this.permitted(canonical)) { this.observed('permission_denied'); return input.trigger!=='observation' }
       if (!this.active) { this.observed('disposed'); return true }
       if (this.config.management && !this.config.management.accepts(input)) { this.observed('management_denied'); return input.trigger!=='observation' }
+      if (source.conflict) { this.observed('conflict'); return true }
+      const reference = this.quoteReference(input,source)
+      if (reference && !input.quotedAttachments?.length && (input.trigger==='observation' || directChat
+          || await this.client.directChat(input.body,true))) {
+        input={...input,reference,trigger:input.trigger==='observation'?'observation':'quoted_reply'}
+      }
+      if (!this.active) { this.observed('disposed'); return true }
       if (source.conflict) { this.observed('conflict'); return true }
       if(input.trigger==='observation') {
         if(this.client.readiness?.execution_profile==='query-local-v1')return false
@@ -650,6 +684,7 @@ export class Receiver {
     const noticesClosed=this.notices?.close()
     this.raw.clear()
     this.observedIds.clear()
+    this.quoteSources.clear()
     for(const key of this.observations.keys())this.cancelObservation(key,'gateway_stopped')
     this.groupArrivals.clear()
     this.speakerArrivals.clear()

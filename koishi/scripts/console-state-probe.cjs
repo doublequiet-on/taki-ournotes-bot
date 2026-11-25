@@ -262,6 +262,13 @@ async function main(){
   const premise=[{kind:'evidence',data:{action:'story_premise',status:'provided'}}]
   assert.ok(JSON.stringify(chatEventsView(premise)).includes('按给定关系推导 · 前提来自群友'))
 
+  const provider=[{kind:'provider_chat',data:{stage:'decision',model:'fixture-model',
+    persona_reason:'revision_mismatch',context:{observed:3,images:1}}}]
+  const providerView=JSON.stringify(chatEventsView(provider))
+  for(const label of ['实际模型请求','只判断是否接话','fixture-model','群观察 3 条','图片 1 张']) {
+    assert.ok(providerView.includes(label))
+  }
+
   const originalDocument=globalThis.document
   let download
   try{

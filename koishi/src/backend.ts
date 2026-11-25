@@ -124,8 +124,8 @@ export class BackendClient implements DeliveryEvents {
   async recognizes(body: string): Promise<boolean> {
     return decodeClassify(await this.retry('/v1/classify', { body }))
   }
-  async directChat(body: string): Promise<boolean> {
-    return decodeDirectChat(await this.retry('/v1/classify', {body}))
+  async directChat(body: string, addressed = false): Promise<boolean> {
+    return decodeDirectChat(await this.retry('/v1/classify', {body}), addressed)
   }
   private encode(input: Inbound, seq: number, policy: PolicySnapshot) {
     if (input.proactiveId!==undefined && (input.trigger!=='proactive' || !/^[a-f0-9]{32}$/.test(input.proactiveId))

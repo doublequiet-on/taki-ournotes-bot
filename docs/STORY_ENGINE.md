@@ -64,11 +64,25 @@ python -B -m ournotes_bot.application.story_cli search --root runtime/story-fixt
 python -B -m ournotes_bot.application.story_cli status --root runtime/story-fixture
 ```
 
-人格批准另需 `approve-persona --persona-id ... --revision ... --reviewer ... --approval-ref ... --confirm-human-review`，这个参数确认来自人工内容所有者。采集或生成任务不应调用该命令。当前工作没有执行真实人格批准。
+### 更新剧情包后恢复已审核人格
+
+人格批准绑定整个剧情包的 SHA-256。即使只改 `aliases`，导入后检索会使用新别名，聊天会回到 `taki-v0/legacy-derived`。此时 `status` 的 `persona` 为 `null`，已开启的请求诊断会记录 `revision_mismatch`。回切到原批准版本可以恢复当时的人格，前提是批准指针仍指向该版，且来源与人格均未撤回。
+
+1. 对配置的 `OURNOTES_STORY_DIR` 运行 `story_cli status`，记下当前 `source_revision`。对照上次批准包与该版本的完整差异，由内容负责人复核人格稿、引用的结论、场景和来源，确认撤回状态。
+2. 内容负责人同意在该版本使用该人格后，保存真实审核记录。可信操作员将下列变量替换为实际目录、人格 ID、**已审核的完整版本**、审核者和记录编号，再执行一次批准。采集或发布脚本不得代填人工确认。
+
+   ```powershell
+   python -B -m ournotes_bot.application.story_cli approve-persona --root $storyRoot --persona-id $personaId --revision $reviewedRevision --reviewer $reviewer --approval-ref $approvalRef --confirm-human-review
+   python -B -m ournotes_bot.application.story_cli status --root $storyRoot
+   ```
+
+3. 核对 `persona.persona_id`、`persona.source_revision` 和 `persona.confirmation_ref` 与审核记录一致。若批准时返回 `story_revision_mismatch`，重新检查当前版本的差异，再由内容负责人决定是否批准。
 
 现有请求诊断开启时，每次聊天选定人格会按请求 ID 记录 `persona` 事件，可在请求详情的「交流处理记录 → 技术记录」查看。默认人格版本为 `taki-v0/legacy-derived`。原因码包括 `story_not_configured`（未配置 Story）、`approval_missing`（没有审批）、`current_missing`（没有当前包）、`revision_mismatch`（审批与当前包版本不符）、`source_withdrawn`（依赖来源已撤回）和 `persona_withdrawn`（人格已撤回）。来源与人格同时撤回时记录来源撤回。使用已批准人格时记录 `approved` 和批准档案的 SHA-256 版本。
 
 事件只保存原因码和版本，沿用既有诊断权限、请求关联和保留周期。审批文件损坏、哈希不符和读盘失败仍返回 `story_persona_unavailable`，不记为默认人格。旧请求缺少事件时，无法从历史 `legacy-derived` 版本反推原因。
+
+实际调用模型时，还会按尝试记录 `provider_chat`。可用它核对点名、续聊、主动接话、轻量接话或主动看图用到的模型及配置、提示模板版本，以及送出了多少条当轮消息、历史、群观察、引用和图片。它区分只判断、只生成和一次完成判断与正文。记录裁剪原因和是否经 Hermes 调度，无正文、图片数据或密钥。受控的合成回放可查看完整请求形状。
 
 ## 验收与边界
 

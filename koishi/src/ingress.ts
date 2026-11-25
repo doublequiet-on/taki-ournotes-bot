@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { adaptSession, QQ, QQBot } from '@satorijs/adapter-qq'
 import type { Session } from 'koishi'
 
+export const quoteReferenceProfile = 'qq-msg-idx-v1'
 export type ConversationKind = 'group' | 'c2c'
 export interface Identity { instanceId: string; appId: string; selfId: string }
 export interface ImageAttachment {
@@ -25,6 +26,8 @@ export interface Inbound {
   messageId: string
   timestampMs: number
   body: string
+  ownQuoteIndex?: string
+  quotedIndex?: string
   quotedText?: string
   quoteHint?: 'image' | 'unknown'
   quotedAttachments?: ImageAttachment[]
@@ -95,6 +98,25 @@ function imageAttachments(value: unknown, messageId: string, quoted = false): Im
   return result
 }
 
+function quoteIndices(data: Record<string,unknown>): Pick<Inbound,'ownQuoteIndex'|'quotedIndex'> {
+  const scene = record(data.message_scene)
+  const extensions = Array.isArray(scene?.ext) ? scene.ext : []
+  const indices = (prefix: string) => extensions
+    .filter((entry): entry is string => typeof entry === 'string' && entry.startsWith(prefix))
+    .map(entry => entry.slice(prefix.length))
+  const unique = (values: unknown[]) => {
+    const [first] = values
+    if (id(first) && !/^TMP_/iu.test(first) && values.every(value => value === first)) return first
+  }
+  const ownQuoteIndex = unique(indices('msg_idx='))
+  if (data.message_type !== 103) return { ownQuoteIndex }
+  const first = Array.isArray(data.msg_elements) ? record(data.msg_elements[0]) : undefined
+  const references: unknown[] = indices('ref_msg_idx=')
+  if (first?.msg_idx !== undefined) references.push(first.msg_idx)
+  const quotedIndex = unique(references)
+  return { ownQuoteIndex, quotedIndex }
+}
+
 /** Keep quoted media separate from the sender's own attachments. */
 function quotePreview(data: Record<string,unknown>, messageId: string): Pick<Inbound,'quotedText'|'quoteHint'|'quotedAttachments'> {
   if (data.message_type !== 103) return {}
@@ -115,7 +137,7 @@ function quotePreview(data: Record<string,unknown>, messageId: string): Pick<Inb
 /** Recognizer comes from the business entry manifest; do not duplicate query parsing. */
 export async function decodeIncoming(
   bot: QQBot, raw: unknown, identity: Identity, recognizes: (body: string) => boolean,
-  observe = false,
+  observe = false, preservePeerMentions = true,
 ): Promise<IngressResult> {
   if (![identity.instanceId, identity.appId, identity.selfId].every(id)) {
     throw new Error('invalid configured identity')
@@ -154,8 +176,17 @@ export async function decodeIncoming(
     || mentions.some(mention => mention?.is_you === true)
     || tags.includes(identity.appId) || tags.includes(identity.selfId)
   if (!addressed && !observe) return { status: 'ignored', reason: 'not_addressed' }
-  // Read raw plain text, not Koishi's escaped element serialization.
-  const body = (addressed?data.content.replace(/<@!?\w+>/gu,''):data.content).trim()
+  let body = data.content
+  if (preservePeerMentions) {
+    const botMentions = new Set([identity.appId, identity.selfId])
+    for (const mention of mentions) {
+      if (mention?.is_you === true && mention.scope !== 'all' && id(mention.id)) botMentions.add(mention.id)
+    }
+    body = body.replace(/<@!?([\w-]+)>/gu, (tag, target: string) => botMentions.has(target) ? '' : tag)
+  } else if (addressed) {
+    body = body.replace(/<@!?\w+>/gu, '')
+  }
+  body = body.trim()
   const attachments = imageAttachments(data.attachments, data.id)
   if (!attachments) return { status: 'rejected', reason: 'invalid_attachments' }
   if ((!attachments.length || /^[/／]/u.test(body)) && (!body || addressed && !recognizes(body))) return { status: 'ignored', reason: 'not_taki' }
@@ -181,6 +212,7 @@ export async function decodeIncoming(
       kind, conversationId, userId, messageId: data.id, timestampMs, body,
       ...(!addressed ? {trigger:'observation' as const} : {}),
       ...quote,
+      ...(kind === 'group' ? quoteIndices(data) : {}),
       ...(id(author.username) ? {senderName:author.username} : {}),
       ...(attachments.length ? {attachments} : {}) },
   }

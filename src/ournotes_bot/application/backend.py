@@ -91,6 +91,9 @@ class Work:
     hermes_send_deadline: float | None = None
     story_versions: tuple = ()
     persona_version: str = 'taki-v0/legacy-derived'
+    persona_reason: str | None = None
+    chat_context_cuts: set[str] = field(default_factory=set)
+    chat_inline_quote_preview: bool = False
     memory_sources: tuple = ()
     image_sources: tuple = ()
     vision_capability: object = None
@@ -349,14 +352,21 @@ class Backend:
             require(0 <= age < WINDOW, 'message_expired', 409)
             require(len(self.works) < self.plan_capacity, 'plan_capacity', 503)
             require(self.retained_bytes() < self.byte_capacity, 'byte_capacity', 503)
-            commands = split_commands(request.body)
+            personal = self.query_runtime is None
+            command_body = replies.command_text(request.body) if personal else request.body
+            commands = split_commands(command_body)
             chat=bool(getattr(self.settings,'chat_engine','legacy')=='agent' and self.model_runtime and (self.model_runtime.is_chat(request.body)
                       or not request.body.strip() and request.attachments or proactive is not None)
-                      and (proactive is not None or parse_operation(request.body) is None))
+                      and (proactive is not None or parse_operation(command_body) is None))
             lines=request.body.strip().splitlines()
-            mixed_modes=bool(any(replies.explicit_chat(line) for line in lines) and
-                             any(replies.recognizes_message(line) and not replies.explicit_chat(line) for line in lines))
-            if chat or mixed_modes or re.match(r'^[/／]?查(?:\s|$)', request.body.strip()): commands=[request.body or '[图片]']
+            explicit_lines=[replies.explicit_chat(line,allow_leading_mentions=personal) for line in lines]
+            mixed_modes=any(explicit_lines) and any(not explicit and
+                replies.recognizes_message(line,allow_leading_mentions=personal)
+                for line,explicit in zip(lines,explicit_lines))
+            if chat or mixed_modes:
+                commands=[request.body or '[图片]']
+            elif re.match(r'^[/／]?查(?:\s|$)', command_body.strip()):
+                commands=[command_body]
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
             key = ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
@@ -399,7 +409,9 @@ class Backend:
                     self.model_runtime is not None and len(commands)==1 and replies.is_ai_request(commands[0])) else None
                 work.missing_anchor = request.reference is not None and work.anchor is None
                 if chat and work.missing_anchor and (self.model_runtime.agent.context.contains(request,request.reference['message_id'])
-                        or self.model_runtime.agent.image_contains(request,request.reference['message_id'])):
+                        or self.model_runtime.agent.image_contains(request,request.reference['message_id'])
+                        or proactive is not None and any(row.message_id == request.reference['message_id']
+                                                        for row in work.proactive.messages)):
                     work.missing_anchor=False
                 if work.anchor is not None:
                     work.key, work.lineage = work.anchor.key, work.anchor.lineage
@@ -419,7 +431,7 @@ class Backend:
     async def prepare_command(self, work, content):
         if getattr(work,'mixed_modes',False):
             return replies.PreparedReply("查询和聊天请分开发送",business_status="invalid_argument")
-        if replies.explicit_chat(content) and not work.chat:
+        if replies.explicit_chat(content,allow_leading_mentions=self.query_runtime is None) and not work.chat:
             return replies.PreparedReply("聊天功能尚未启用，请使用 /查 查询资料。")
         if work.chat:
             content=await self.model_runtime.agent.proactive.coalesce_addressed(work,content)
@@ -994,10 +1006,14 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'body'} and isinstance(value['body'], str), 'classify_shape')
         require(len(value['body'].encode()) <= 16384, 'body_size')
+        body = value['body']
+        personal = backend.query_runtime is None
+        command_body = replies.command_text(body) if personal else body
+        chat = bool(backend.model_runtime and backend.model_runtime.is_chat(body))
         return json({'direct_chat': bool(getattr(backend.settings,'chat_engine','legacy')=='agent' and
-            (replies.explicit_chat(value['body']) or replies.named_chat(value['body']))),
-            'recognized': replies.recognizes_message(value['body']) or bool(
-            getattr(backend.settings,'chat_engine','legacy')=='agent' and backend.model_runtime and backend.model_runtime.is_chat(value['body']))})
+            (replies.explicit_chat(body,allow_leading_mentions=personal) or personal and replies.named_chat(body))),
+            'recognized': replies.recognizes_message(command_body,allow_leading_mentions=personal) or chat,
+            **({'chat': chat} if 'qq-msg-idx-v1' in backend.reference_profiles else {})})
     async def retire(request):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'gateway_epoch'}, 'epoch_shape')
@@ -1079,7 +1095,8 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
         from .chat_jobs import ServiceError
         require(backend.accepting(),'not_ready',503)
         value=await read_json(request)
-        parsed=Request.parse(value,backend.instance_id,backend.app_id,backend.clock())
+        parsed=Request.parse(value,backend.instance_id,backend.app_id,backend.clock(),
+                             reference_profiles=backend.reference_profiles)
         require(parsed.trigger=='observation' and backend.ledger.active(parsed.gateway_epoch),'observation_admission',409)
         require(0<=backend.clock()-parsed.timestamp_ms/1000<WINDOW,'message_expired',409)
         agent=backend.model_runtime.agent if backend.model_runtime else None
@@ -1099,7 +1116,8 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
         from ..domain.model_calls import ModelError
         require(backend.accepting(),'not_ready',503)
         value=await read_json(request)
-        parsed=Request.parse(value,backend.instance_id,backend.app_id,backend.clock())
+        parsed=Request.parse(value,backend.instance_id,backend.app_id,backend.clock(),
+                             reference_profiles=backend.reference_profiles)
         require(parsed.trigger=='proactive' and parsed.policy.natural_query=='model'
                 and backend.ledger.active(parsed.gateway_epoch),'proactive_admission',409)
         require(0<=backend.clock()-parsed.timestamp_ms/1000<WINDOW,'message_expired',409)
