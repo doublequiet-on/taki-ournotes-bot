@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="162 143 477 517">
+  <defs>
+    <!-- The outer arc returns along the five inward-facing teeth. -->
+    <path id="seal" d="M178 264
+      C224 198 297 157 381 157
+      C516 157 624 266 624 401
+      C624 536 516 646 381 646
+      C298 646 225 607 177 540
+      L224 510 Q240 519 260 524 L267 566 L312 566
+      L319 524 Q337 519 352 509 L389 533 L424 501
+      L397 466 Q405 448 410 431 L455 424 L455 379
+      L410 372 Q404 352 397 338 L424 300 L390 266
+      L352 293 Q335 284 319 280 L312 238 L268 238
+      L261 280 Q241 285 224 295 Z"/>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#aa9785"/><stop offset="1" stop-color="#806b60"/>
+    </linearGradient>
+  </defs>
+  <use href="#seal" transform="translate(1.5 3)" stroke="#fffdf4" stroke-width="8" fill="none"/>
+  <use href="#seal" fill="url(#ink)" fill-opacity=".32" stroke="#756154" stroke-width="6" stroke-linejoin="miter"/>
+</svg>

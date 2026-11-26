@@ -1,0 +1,140 @@
+{
+  "id": 4,
+  "title": "指尖编织出的微风",
+  "jpTitle": "指先で紡ぐそよ風",
+  "character": "长崎爽世",
+  "band": "MyGO!!!!!",
+  "bandColor": "#3388BB",
+  "category": "常驻",
+  "maxLevel": 70,
+  "stats": [
+    {
+      "label": "表演",
+      "initial": 3082,
+      "max": 7545,
+      "color": "#FF8899"
+    },
+    {
+      "label": "技巧",
+      "initial": 3993,
+      "max": 9774,
+      "color": "#77BBDD"
+    },
+    {
+      "label": "形象",
+      "initial": 3047,
+      "max": 7458,
+      "color": "#FFDD88"
+    }
+  ],
+  "skills": [
+    {
+      "role": "队长",
+      "name": "MyGO!!!!!技巧值UP",
+      "icon": "icon_skill_parameter_mygo_1.png",
+      "clauses": [
+        {
+          "condition": "MyGO!!!!! 成员的技巧值提升",
+          "values": [
+            "12%",
+            "21%",
+            "30%",
+            "42%",
+            "72%"
+          ]
+        }
+      ],
+      "kind": "leader",
+      "skillId": 2
+    },
+    {
+      "role": "演出",
+      "name": "得分UP",
+      "icon": "icon_skill_scoreup.png",
+      "clauses": [
+        {
+          "condition": "【简单】5 秒内得分提升",
+          "values": [
+            "10%",
+            "20%",
+            "30%",
+            "40%",
+            "70%"
+          ]
+        }
+      ],
+      "kind": "live",
+      "skillId": 1
+    },
+    {
+      "role": "激奏",
+      "name": "JUST获得量UP",
+      "icon": "icon_skill_just_count.png",
+      "clauses": [
+        {
+          "condition": "JUST 激奏开始后，JUST 获得量 +1",
+          "label": "持续时间",
+          "values": [
+            "2 秒",
+            "3 秒",
+            "4 秒",
+            "5 秒",
+            "全程"
+          ]
+        }
+      ],
+      "kind": "gekisou",
+      "skillId": 1
+    }
+  ],
+  "release": "r-446fa5ab7a4d6ee030a2",
+  "relations": {
+    "events": [],
+    "gachas": []
+  },
+  "portrait": "portrait-4.png",
+  "frame": "frame-R.png",
+  "rarityIcon": "RarityIconCenter_R.png",
+  "attributeIcon": "attr-Yellow.png",
+  "attributeName": "黄色",
+  "rarityLabel": "R",
+  "bandId": 1,
+  "cultivation": {
+    "trainingStage": 5,
+    "trainingBonus": 2476,
+    "awakeningStage": 5,
+    "awakeningBonus": 2476,
+    "total": 29729,
+    "maxLevel": 70,
+    "stats": [
+      {
+        "key": "performance",
+        "initial": 3082,
+        "base": 7545,
+        "trainingBonus": 754,
+        "awakeningBonus": 754,
+        "full": 9053
+      },
+      {
+        "key": "technique",
+        "initial": 3993,
+        "base": 9774,
+        "trainingBonus": 977,
+        "awakeningBonus": 977,
+        "full": 11728
+      },
+      {
+        "key": "visual",
+        "initial": 3047,
+        "base": 7458,
+        "trainingBonus": 745,
+        "awakeningBonus": 745,
+        "full": 8948
+      }
+    ]
+  },
+  "jpDebutDate": "2026-09-24",
+  "characterId": 4,
+  "logo": "wordmark-1.png",
+  "emblem": "band_Icon_mygo.png"
+}

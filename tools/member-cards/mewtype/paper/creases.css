@@ -1,0 +1,54 @@
+/* One accordion sheet, lit from above left. All stops are in CSS pixels. */
+main.foldsheet > :is(.art-page, .lyric-page, .relation-page) {
+  position: relative;
+  isolation: isolate;
+  background-color: #fffaef;
+}
+
+/* The first crease recedes. Both faces turn into its narrow violet shadow. */
+main.foldsheet > .art-page {
+  background-image:
+    linear-gradient(to left, #614b645c, #79657439 2px, #9b838e20 9px, #a7939b09 18px, transparent 31px),
+    linear-gradient(138deg, #fae6e6 0%, #fff8ef 24%, #fff8ef 65%, #f7eddf 100%);
+}
+
+main.foldsheet > .lyric-page {
+  --right-crease: linear-gradient(transparent, transparent);
+  background-image:
+    linear-gradient(to right, #69596664, #7d697e3d 2px, #8d7e8824 7px, #907d8f0d 15px, transparent 29px),
+    var(--right-crease),
+    linear-gradient(123deg, #fff9ee 4%, #fffdf4 52%, #f6f2ed 100%);
+}
+
+/* When the insert is open, light catches the ridge on the middle leaf.
+   Its far face changes plane over a broader area than the first fold. */
+main.foldsheet:has(> .relation-page) > .lyric-page {
+  --right-crease: linear-gradient(to left, #fffef7 0, #fffdf2bd 1px, #fffdf659 4px, transparent 19px);
+}
+
+main.foldsheet > .relation-page {
+  background-image:
+    linear-gradient(to right, #5b68754b 0, #64727a36 1px, #697e8726 6px, #92a2a51a 15px, transparent 38px),
+    linear-gradient(115deg, #e9ede8 0%, #f6f4e9 28%, #fbf5e9 71%, #f9eada 100%);
+}
+
+/* Screenprinted dots fade out before the reading area. */
+main.foldsheet > .art-page::before,
+main.foldsheet > .relation-page::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle at 1.7px 1.7px, currentColor .55px, transparent .8px) 0 0 / 3.8px 3.8px;
+}
+
+main.foldsheet > .art-page::before {
+  color: #b8657b50;
+  mask-image: radial-gradient(ellipse 95px 73px at top left, #000b, transparent);
+}
+
+main.foldsheet > .relation-page::after {
+  color: #6c939948;
+  mask-image: radial-gradient(ellipse 107px 74px at bottom right, #000c, transparent);
+}

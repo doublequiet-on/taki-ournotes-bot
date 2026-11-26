@@ -1,0 +1,55 @@
+/* One inset face for all five values. The twin-row variant shares the same
+   backing, so a tier occupies an uninterrupted column across both conditions. */
+main.foldsheet[data-band-id="3"] .filter-panel {
+  --trough-corner: 5px;
+  --trough-paint:
+    linear-gradient(180deg, #51405215, transparent 4px, transparent calc(100% - 4px), #ffffff33),
+    linear-gradient(90deg, #ede9ed 0%, #f1edf0 70%, #f1edf0 80%, #f6e3af 80%, #f8eac3 100%);
+  --trough-edge:
+    inset 0 1px 1.5px #554a5a55, inset 0 0 0 .7px #68576555,
+    inset 0 -1px #fffdfb, 0 .8px #fffefa;
+  & .skills .tier-guide { margin-bottom: 0; }
+  & .tier-captions > :last-child, & .score-pair thead th:last-child {
+    background: linear-gradient(180deg,#fcf2d9,#f6e4b6);
+    border-radius: 3px 3px 0 0;
+    color: #705530;
+    font-weight: 650;
+  }
+  & .skills .level, & .skills .sequence > .level:last-child, & .score-pair td:last-child .level {
+    position: relative;
+    background: transparent;
+    box-shadow: none;
+    border-color: transparent;
+  }
+  & .skills .effect > .sequence,
+  & .skills :is(.ladder-rows,.score-pair tbody)::after {
+    background: var(--trough-paint);
+    border-radius: var(--trough-corner) 0 var(--trough-corner) var(--trough-corner);
+    box-shadow: var(--trough-edge);
+  }
+  & .skills :is(.ladder-rows,.score-pair tbody) {
+    position: relative;
+    isolation: isolate;
+  }
+  & .skills :is(.ladder-rows,.score-pair tbody)::after {
+    content: "";
+    position: absolute;
+    inset: 0 0 0 var(--field-width);
+    z-index: -1;
+    pointer-events: none;
+  }
+  & .skills .level:not(:first-child)::before,
+  & .score-pair td:not(:nth-child(2)) > .level::before {
+    content: "";
+    position: absolute;
+    left: 0; bottom: 1px;
+    height: 4px; width: 1px;
+    background: #8a808d88;
+    box-shadow: .7px 0 #fff9f0b0;
+  }
+  & .ladder-rows .limits + .limits .sequence {
+    background: linear-gradient(90deg,transparent 2%,#9a8e9c52 12%,#9a8e9c52 73%,#b49a6a55 90%,transparent 99%) left top / 100% 1px no-repeat;
+  }
+  & .score-pair tbody tr + tr > * { border: 0; }
+  & .score-pair tbody tr + tr > td { box-shadow: inset 0 1px #9a8e9c42; }
+}

@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-213 0 417 169" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <title>趴在桌面任务栏边缘的丸君</title>
+  <defs>
+    <linearGradient id="fur" x1=".25" y1="0" x2=".62" y2="1">
+      <stop stop-color="#fffaf7"/><stop offset=".58" stop-color="#fff3f4"/><stop offset="1" stop-color="#f1e1ed"/>
+    </linearGradient>
+    <linearGradient id="tip" x1="0" y1="0" x2=".35" y2="1">
+      <stop stop-color="#efd7e7"/><stop offset=".42" stop-color="#ddb1cf"/><stop offset="1" stop-color="#bb88b6"/>
+    </linearGradient>
+    <radialGradient id="iris" cx=".40" cy=".35" r=".78">
+      <stop stop-color="#302237"/><stop offset=".75" stop-color="#42253e"/><stop offset="1" stop-color="#6e4563"/>
+    </radialGradient>
+    <linearGradient id="fold" x2=".22" y2="1">
+      <stop stop-color="#fffdf2"/><stop offset="1" stop-color="#f9eedf"/>
+    </linearGradient>
+    <path id="left-ear" d="M61 35c-7-6-17-4-24 3-10 10-12 24-18 37C14 85 9 89 2 89q3 6 12 7c-5 12-5 26 7 34-.5-7 4-11 11-15 7-5 11-12 14-18-1 6-.3 11 3 15 5-8 7-17 8-27 1-11 3-23 7-31z"/>
+    <path id="right-ear" d="M145 36c8-7 19-5 26 3 10 10 14 25 17 37 3 10 8 17 15 19q-4 5-11 5c2 11-3 23-13 29 0-5-4-9-8-13q1 8-2 14c-9-7-16-21-19-33-3-13-3-28-8-39z"/>
+    <clipPath id="ear-left-clip"><use href="#left-ear"/></clipPath>
+    <clipPath id="ear-right-clip"><use href="#right-ear"/></clipPath>
+    <g id="eye">
+      <ellipse rx="7.5" ry="7.8" fill="url(#iris)" stroke="#43263e" stroke-width=".85"/>
+      <ellipse cx="2.45" cy="3" rx="3.1" ry="3.9" transform="rotate(25 2.45 3)" fill="#a87496"/>
+      <circle cx="-2.8" cy="-3.1" r="2.15" fill="#fffbfc"/>
+    </g>
+    <g id="gold-star">
+      <path d="m0-12 4.3 7.9 8.8 1.1-6.5 6.3 1.6 8.7L0 7.8l-8.1 4.2 1.6-8.9-6.4-6.2 8.8-1.1Z" fill="#ffe078" stroke="#9e7852" stroke-width="1.05"/>
+      <path d="M0-11.1 0 .7l4-4.6z" fill="#fff1a7"/>
+      <path d="m0 .7 12.1-3.6-6.2 6.1 1.4 7.8z" fill="#e2b357"/>
+      <path d="m0 .7-7.5 10.5L0 7.3l7.3 3.7z" fill="#efbf58"/>
+      <path d="M0 .7-12.1-2.7l8.2-1.1z" fill="#ffe9a0"/>
+    </g>
+    <g id="paw-star">
+      <path d="m.4-8.1 2.7 5L9-2.6 4.7 1.8l1.2 5.8L.5 4.9l-5.2 3.2.7-6-4.6-3.8 6-.9z" fill="#b487b6" stroke="#907297" stroke-width="1"/>
+      <path d="m-5.4-1.6 2.6-.5L.3-6" stroke="#dac0d7" stroke-width=".65"/>
+    </g>
+  </defs>
+
+  <!-- Ears lie behind the cheeks. The tapered white tufts break into the pink tips. -->
+  <g stroke="#7f607d" stroke-width="1.6">
+    <use href="#left-ear" fill="url(#fur)"/>
+    <g clip-path="url(#ear-left-clip)" stroke="none">
+      <path d="M3 80q12-4 19-16c-1 7-3 13-6 19 9-6 15-14 20-21-1 8-4 17-7 23 7-5 12-11 18-20l-4 19 14-8 2 29-13 32-49-8z" fill="url(#tip)"/>
+      <path d="M40 41q6-5 14-5-11 13-14 28c1-10 1-13 0-15l-5 6z" fill="#e3ccdf" opacity=".58"/>
+    </g>
+    <use href="#left-ear"/>
+    <use href="#right-ear" fill="url(#fur)"/>
+    <g clip-path="url(#ear-right-clip)" stroke="none">
+      <path d="M147 74q7 11 13 15l-4-16q7 11 15 17-1-9-5-20 10 13 16 17-1-7-4-15 9 13 20 19l10 6-15 43-34 1-15-39z" fill="url(#tip)"/>
+      <path d="M154 38q12 2 19 18-8-9-13-9l4 8q-8-9-13-9z" fill="#e4cde1" opacity=".59"/>
+    </g>
+    <use href="#right-ear"/>
+  </g>
+
+  <defs><clipPath id="behind-bar"><path d="M0 0h204v140L0 145z"/></clipPath></defs>
+  <g clip-path="url(#behind-bar)">
+  <path d="M66 116q5-10 17-13l44 1q12 3 17 15 4 11 9 20l-2 20-82 6-10-25z" fill="url(#fur)" stroke="#876781" stroke-width="1.65"/>
+  <path d="M70 122q20 7 34 5 13 0 26-7-12 2-26 2-20-1-34-6z" fill="#dfc7dc" opacity=".63"/>
+
+  </g>
+  <!-- Slightly tilted toward the live feed, with short crown and cheek tufts. -->
+  <g transform="rotate(-5 103 75)">
+    <path d="M51 82c-2-21 6-41 25-52 4-2 9-4 13-5q4-3 5-7 2 2.5 1.7 5.4 5.8-4 8-10 2.3 3.4 1 7.5 5-1.8 9-6.3.7 5.8-1.1 8.2
+      c18 3 32 13 39 30 3 8 4 18 3 27q.2 3.3 3 6.2-2 .4-4.1-.8.6 7.8 4.1 12.3-2 .4-5-1.2
+      q-1 6-6 10l-3-2q-4 7-11 10l-3-2q-9 6-19 6l-4 3-3-3
+      c-9 1-18-1-25-4l-1.5 2-6-4-4 .4q-8-4-12-11l-4 1q-4-5-5-11l-4 0q4-6 3-11z"
+      fill="url(#fur)" stroke="#795b75" stroke-width="1.7"/>
+    <path d="M53 88q1 10 7 14l-1-4q8 12 20 15 8 4 18 4-17-.3-26-4l-4 .3-9-7-3 1q-4-5-5-11l-2 0z" fill="#e6d3e3" opacity=".78"/>
+    <path d="M144 56q4 8 4 16m-1 20q-1.4 5-5.3 9" fill="none" stroke="#e1cddd" stroke-width="1.15"/>
+    <g transform="translate(84 75)"><use href="#eye"/></g>
+    <g transform="translate(125 75)"><use href="#eye"/></g>
+    <path d="M99.8 85.9q5-2 9.1-.2c2.1 1.2.1 4.1-3.3 6.6q-.9.7-1.8-.1c-2.7-2.1-6.2-5.1-4-6.3z" fill="#47273e" stroke="#44263d" stroke-width="1"/>
+    <path d="M99 96.5q5.6-.5 7-3.3 2.4 3.8 6.6 4.2-2.3 6.3-7.4 6.1-4.6-.5-6.2-7z" fill="#e58298" stroke="#97677b" stroke-width=".78"/>
+    <path d="M90.4 93.1q1.2 4.7 7.6 4.4 4.7-.2 7.3-5.1 2.5 5.2 8.4 5.1 4.4.1 6.4-4.2" fill="none" stroke="#55364b" stroke-width="1.35"/>
+    <g transform="translate(139 42) rotate(-13) scale(.87)"><use href="#gold-star"/></g>
+  </g>
+
+  <!-- Small gold beads and a second, separate, faceted star at the neck. -->
+  <path d="M80 115q18 12 42 1" fill="none" stroke="#a47b54" stroke-width="1.1"/>
+  <g fill="#f6d773" stroke="#b28d5d" stroke-width=".75">
+    <circle cx="84" cy="117.6" r="2.15"/><circle cx="90" cy="119.9" r="2.3"/>
+    <circle cx="97" cy="121.2" r="2.35"/><circle cx="104" cy="121.3" r="2.2"/>
+    <circle cx="111" cy="120.3" r="2.15"/><circle cx="117" cy="118.6" r="2.05"/>
+  </g>
+  <g transform="translate(101 134) rotate(-9) scale(.99)"><use href="#gold-star"/></g>
+
+  <defs>
+    <linearGradient id="bar-ink"><stop stop-color="#b59daa" stop-opacity="0"/><stop offset=".28" stop-color="#c8a7be"/><stop offset="1" stop-color="#aa94ac"/></linearGradient>
+    <linearGradient id="bar-paper"><stop stop-color="#fff7f4" stop-opacity="0"/><stop offset=".26" stop-color="#f3e8ef"/><stop offset="1" stop-color="#e3ebf3"/></linearGradient>
+    <radialGradient id="paw-shade"><stop stop-color="#977884" stop-opacity=".48"/><stop offset="1" stop-color="#977884" stop-opacity="0"/></radialGradient>
+  </defs>
+  <path d="M-210 149Q-52 146 204 140v16q-219 4-414 4z" fill="url(#bar-paper)"/>
+  <path d="M-210 149Q-52 146 204 140" stroke="url(#bar-ink)" stroke-width="2.4"/>
+  <path d="M-198 160q164-1 402-5" stroke="url(#bar-ink)" stroke-width="1"/>
+  <g transform="rotate(-1.2 30 145)"><ellipse cx="53" cy="146.5" rx="26" ry="4" fill="url(#paw-shade)"/><ellipse cx="156" cy="147" rx="26" ry="4" fill="url(#paw-shade)"/></g>
+  <!-- Raised short paws: each has its own purple five-point patch. -->
+  <g stroke="#876781" stroke-width="1.4">
+    <path d="M77 137q-2 8-12 10l-1-2q-6 4-13 1l-1-2c-11-1-20-6-21-15-.9-8 4-15 12-16 6-2.4 13 0 18 4q3 .3 5 3l2-.5q5 3 8 9" fill="url(#fur)"/>
+    <path d="M133 129q3-7 10-10l2 .8q8-6 16-5 12 .2 16 9 3 9-4 17-5 6-16 8l-2-1.4q-7 3-12 .1l-1.5-2" fill="url(#fur)"/>
+  </g>
+  <path d="M34 135q7 8 17 7m110 2q8-1 12-7" fill="none" stroke="#dec6db" stroke-width="1.3"/>
+  <g transform="translate(45 129) rotate(-16) scale(1.02)"><use href="#paw-star"/></g>
+  <g transform="translate(161 131) rotate(15) scale(1.02)"><use href="#paw-star"/></g>
+</svg>

@@ -1,0 +1,199 @@
+{
+  "id": 73,
+  "title": "无餍之渴",
+  "jpTitle": "満ちることなき渇き",
+  "character": "Doloris / 三角初华",
+  "band": "Ave Mujica",
+  "bandId": 2,
+  "bandColor": "#881144",
+  "category": "限定",
+  "maxLevel": 90,
+  "stats": [
+    {
+      "label": "表演",
+      "initial": 12768,
+      "max": 31396,
+      "color": "#FF8899"
+    },
+    {
+      "label": "技巧",
+      "initial": 12032,
+      "max": 29584,
+      "color": "#77BBDD"
+    },
+    {
+      "label": "形象",
+      "initial": 16329,
+      "max": 40151,
+      "color": "#FFDD88"
+    }
+  ],
+  "skills": [
+    {
+      "role": "队长",
+      "name": "Ave Mujica&翡翠以外形象值UP",
+      "icon": "icon_skill_parameter_mujica_3.png",
+      "kind": "leader",
+      "skillId": 62,
+      "sourceTexts": [
+        "Ave Mujica成员的形象值提升42.0%\n并且每编入1名与翡翠不同的成员(最多2人)\n全体成员的形象值提升24%(最高48%)",
+        "Ave Mujica成员的形象值提升52.0%\n并且每编入1名与翡翠不同的成员(最多2人)\n全体成员的形象值提升24%(最高48%)",
+        "Ave Mujica成员的形象值提升62.0%\n并且每编入1名与翡翠不同的成员(最多2人)\n全体成员的形象值提升24%(最高48%)",
+        "Ave Mujica成员的形象值提升72.0%\n并且每编入1名与翡翠不同的成员(最多2人)\n全体成员的形象值提升24%(最高48%)",
+        "Ave Mujica成员的形象值提升102.0%\n并且每编入1名与翡翠不同的成员(最多2人)\n全体成员的形象值提升24%(最高48%)"
+      ]
+    },
+    {
+      "role": "演出",
+      "name": "得分UP（LIFE加成）",
+      "icon": "icon_skill_scoreup.png",
+      "kind": "live",
+      "skillId": 10,
+      "sourceTexts": [
+        "【生命值】5秒内得分提升60.0%\n发动时若生命值在900及以上\n得分提升90.0%",
+        "【生命值】5秒内得分提升70.0%\n发动时若生命值在900及以上\n得分提升100.0%",
+        "【生命值】5秒内得分提升80.0%\n发动时若生命值在900及以上\n得分提升110.0%",
+        "【生命值】5秒内得分提升90.0%\n发动时若生命值在900及以上\n得分提升120.0%",
+        "【生命值】5秒内得分提升120.0%\n发动时若生命值在900及以上\n得分提升150.0%"
+      ]
+    },
+    {
+      "role": "激奏",
+      "name": "激奏COMBO数获得量UP（LIFE加成）",
+      "icon": "icon_skill_combo.png",
+      "kind": "gekisou",
+      "skillId": 19,
+      "sourceTexts": [
+        "保持激奏COMBO不断时\n激奏COMBO获得量提升2\nLIFE在950以上时\n激奏COMBO获得量提升4",
+        "保持激奏COMBO不断时\n激奏COMBO获得量提升2\nLIFE在900以上时\n激奏COMBO获得量提升4",
+        "保持激奏COMBO不断时\n激奏COMBO获得量提升2\nLIFE在850以上时\n激奏COMBO获得量提升4",
+        "保持激奏COMBO不断时\n激奏COMBO获得量提升2\nLIFE在800以上时\n激奏COMBO获得量提升4",
+        "保持激奏COMBO不断时\n激奏COMBO获得量提升2\nLIFE在700以上时\n激奏COMBO获得量提升4"
+      ]
+    }
+  ],
+  "release": "r-446fa5ab7a4d6ee030a2",
+  "portrait": "portrait-73.png",
+  "frame": "frame-SSR.png",
+  "rarityIcon": "RarityIconCenter_SSR.png",
+  "attributeIcon": "attr-Green.png",
+  "attributeName": "绿色",
+  "rarityLabel": "SSR",
+  "relations": {
+    "events": [
+      {
+        "id": 4,
+        "name": "A day～#HalloweenSnap～",
+        "role": "加成",
+        "cardBonuses": {
+          "scope": "活动 PT、本卡活动综合力",
+          "ranks": "卡牌 Rank 1 → 5",
+          "rows": [
+            {
+              "name": "合计",
+              "values": [
+                60,
+                70,
+                80,
+                90,
+                100
+              ]
+            },
+            {
+              "name": "其中专属",
+              "values": [
+                30,
+                35,
+                40,
+                45,
+                50
+              ]
+            }
+          ]
+        },
+        "banner": "event-4.png",
+        "targets": {
+          "attributes": [
+            {
+              "image": "attr-Blue.png",
+              "name": "绀碧"
+            },
+            {
+              "image": "attr-Green.png",
+              "name": "翡翠"
+            },
+            {
+              "image": "attr-Yellow.png",
+              "name": "琉金"
+            }
+          ],
+          "bands": [
+            {
+              "image": "band_Icon_mygo.png",
+              "name": "MyGO!!!!!"
+            },
+            {
+              "image": "band-2-emblem.png",
+              "name": "Ave Mujica"
+            }
+          ]
+        }
+      }
+    ],
+    "gachas": [
+      {
+        "id": 16,
+        "name": "晦冥的夜行者们招募",
+        "banner": "gacha-16.png"
+      },
+      {
+        "id": 17,
+        "name": "万圣节 SSR必得券招募",
+        "banner": "gacha-17.png"
+      },
+      {
+        "id": 18,
+        "name": "晦冥的夜行者们 期间限定SSR必得券招募",
+        "banner": "gacha-18.png"
+      }
+    ]
+  },
+  "characterId": 6,
+  "cultivation": {
+    "trainingStage": 5,
+    "trainingBonus": 10112,
+    "awakeningStage": 5,
+    "awakeningBonus": 10112,
+    "total": 121355,
+    "maxLevel": 90,
+    "stats": [
+      {
+        "key": "performance",
+        "initial": 12768,
+        "base": 31396,
+        "trainingBonus": 3139,
+        "awakeningBonus": 3139,
+        "full": 37674
+      },
+      {
+        "key": "technique",
+        "initial": 12032,
+        "base": 29584,
+        "trainingBonus": 2958,
+        "awakeningBonus": 2958,
+        "full": 35500
+      },
+      {
+        "key": "visual",
+        "initial": 16329,
+        "base": 40151,
+        "trainingBonus": 4015,
+        "awakeningBonus": 4015,
+        "full": 48181
+      }
+    ]
+  },
+  "jpDebutDate": "2026-10-28",
+  "logo": "wordmark-2.png",
+  "emblem": "band-2-emblem.png"
+}

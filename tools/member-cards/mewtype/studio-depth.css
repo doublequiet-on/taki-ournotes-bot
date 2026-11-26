@@ -1,0 +1,48 @@
+/* A translucent backplate carries the preview. Only the solid skill module projects forward. */
+#print main.foldsheet[data-band-id="3"] .lyric-page .studio-desk {
+  &::before, &::after {
+    position:absolute; pointer-events:none; content:""; inset:-7px -5px -9px -6px;
+    clip-path:polygon(0 8px,8px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%);
+  }
+  &::before {
+    z-index:-2; transform:translate(2.5px,4px); border:0;
+    background:linear-gradient(156deg,#c8c6dd 3%,#f7d9e8 42%,#b0b6d3 79%,#aaa4bf);
+  }
+  &::after {
+    z-index:-1; border:1px solid #fff9ff;
+    background:
+      linear-gradient(126deg,transparent 8%,#ffffff8c 19%,#ffffff1a 34%,transparent 38%),
+      linear-gradient(148deg,#f9f5fbe6,#eeeaf6ea 45%,#e3dfefe6);
+    box-shadow:inset -1.4px -1.5px #c2bcd2,inset 1.2px 1.1px #fff;
+  }
+  & header .band-shelf { filter:drop-shadow(1.4px 2.8px 1.6px #52426439); }
+  & .obs-preview {isolation:isolate;}
+  & .obs-preview::before {
+    content:"";position:absolute;pointer-events:none;z-index:-1;inset:1px 0 -1px;
+    background:linear-gradient(115deg,#e3dcea82,#f9f5fcab 45%,#ebe7f671);
+    border-radius:3px;box-shadow:inset .8px 1px 2px #9f8eaa3b,0 1px #fffcff;
+  }
+  & .filter-panel {
+    position:relative;left:-3px;
+    border-color:#bfaabb #b3a0b3 #a58da4 #cec0d0;
+    border-radius:6px;
+    background:linear-gradient(118deg,#fffcfe,#faf6fb 77%,#f3eff8);
+    box-shadow:
+      1px 1px 0 #d4c2ce,2px 2px 0 #cebac8,3px 3px 0 #c7b4c4,
+      4px 4px 0 #bcaabe,5px 5px 0 #ac9aac,
+      5px 7px 3px #5e426438,7px 11px 11px #61446a37;
+    --trough-paint:
+      linear-gradient(180deg,#84728735,transparent 4px,transparent calc(100% - 3px),#ffffff61),
+      linear-gradient(90deg,#e9e3ea,#f2edf3 79.9%,#f9e0a6 80%,#ffedc5);
+    --trough-edge:inset 1px 1.6px 2px #6e597759,inset 0 0 0 .7px #93829788,inset 0 -1px #fffefa,0 1px #fff;
+  }
+  & .filter-panel > h2.section {
+    background:
+      linear-gradient(180deg,#fff4 0%,transparent 18%,transparent 80%,#a83c681f),
+      linear-gradient(98deg,#ff879f,#ff9bb4 68%,#ffc1d3);
+    box-shadow:inset 0 1px #fff5fbcc,inset 0 -1px #bb678866;
+  }
+  & .filter-rail {
+    box-shadow:inset 1px 0 #fff9,inset -1px 0 #a480982b;
+  }
+}

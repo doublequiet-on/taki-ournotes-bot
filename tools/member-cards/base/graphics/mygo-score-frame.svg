@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100" preserveAspectRatio="none" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <!-- The two verticals begin at the two ends of the staff. -->
+  <path d="M2.5 .8 Q2 25 2.4 49 T2 98.4 M298.4 0 Q297.95 38 298.45 66 L298.4 98.2"
+        stroke="#78919a" opacity=".43" stroke-width=".9" vector-effect="non-scaling-stroke"/>
+  <path d="M2 98.4 Q66 98.1 130 98.7 T233 98.6 L298.4 98.2"
+        stroke="#78919a" opacity=".9" stroke-width="1.05" vector-effect="non-scaling-stroke"/>
+</svg>

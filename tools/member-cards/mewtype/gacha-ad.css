@@ -1,0 +1,86 @@
+main.foldsheet[data-band-id="3"] > .relation-page {
+  & .relations > .gachas.web-window.gacha-ad {
+    --ink: #59334f;
+    --edge: #92536e;
+    --paper: #fff9ec;
+    margin: 0 6px 4px 10px;
+    padding: 0;
+    border: 1.5px solid var(--edge);
+    border-radius: 4px;
+    background: var(--paper);
+    box-shadow: 2px 2px 0 #ffabc3, 4px 4px 0 #8a6881,
+                6px 6px 0 #bde6ef, 6.5px 6.5px 0 #9da7b7,
+                5px 9px 7px #6240542a;
+  }
+  /* Only the window trim overlaps. Both documents stay in normal flow. */
+  & .relations > .events + .gachas.web-window.gacha-ad { margin-top: -19px; }
+  & .relations .gacha-ad.web-window > dt {
+    align-items:center;
+    gap:6px;
+    padding: 3.5px 8px;
+    border-radius: 2px 2px 0 0;
+    border-bottom: 1px solid var(--edge);
+    background:
+      radial-gradient(ellipse at center,#ffffff8a .7px,transparent .9px) right top / 4px 4px,
+      linear-gradient(100deg,#ff7199,#ff9eb5 75%,#ffc6ce);
+    color:var(--ink);
+    box-shadow:inset 0 1px #ffd7df;
+  }
+  & .relations .gacha-ad.web-window > dt::after {
+    position: absolute;
+    content: "";
+    right:-4px; top:-5px; width:16px; height:16px;
+    border:1px solid #76435d; border-radius:50%;
+    margin:0; transform:none;
+    background:
+      linear-gradient(45deg,transparent 42%,#613348 45% 55%,transparent 58%) center / 8px 8px no-repeat,
+      linear-gradient(-45deg,transparent 42%,#613348 45% 55%,transparent 58%) center / 8px 8px no-repeat,
+      #fff5f6;
+    box-shadow:1px 1px 0 #a65879;
+  }
+  & .gacha-ad .ad-mark {
+    display:inline-block;
+    padding:2px 6px;
+    border:1px solid #986342;
+    border-radius:2px;
+    transform:rotate(-4deg);
+    background:#ffe38c;
+    color:#593645;
+    box-shadow:.7px 1px #bb687a;
+    font:700 11.5px/1.12 "Noto Sans SC Variable",sans-serif;
+    letter-spacing:.06em;
+  }
+  & .gacha-ad .ad-title {
+    color:#552b45;
+    font:650 14px/1.24 "Noto Sans SC Variable",sans-serif;
+    letter-spacing:.035em;
+  }
+  & .relations .gacha-ad > dt .relation-id {
+    margin:0 12px 0 auto; padding:1px 4px;
+    border-radius:2px;
+    background:#fff1f2c9; color:#633f52;
+    font:600 10px/1.25 "Roboto Variable",sans-serif;
+  }
+  & .relations .gacha-ad.web-window > dd .window-content {
+    display:grid; grid-template-columns:minmax(0,1fr);
+    column-gap:6px; row-gap:0; padding:3px;
+  }
+  & .relations .gacha-ad.web-window dd .relation-banner {
+    display:block; width:100%; height:auto; max-width:none;
+    border:.7px solid #d3a1b4; border-radius:1px;
+  }
+  & .relations .gacha-ad.web-window dd .relation-caption {
+    min-width:0; padding:6px 6px 5px;
+  }
+  & .relations .gacha-ad.web-window .relation-name {
+    color:#503348; font-size:17.2px; line-height:1.28;
+    overflow-wrap:anywhere;
+  }
+  & .relations .gacha-ad .relation-caption .relation-id {
+    display:block; margin-top:3px; font-size:10.5px; color:#725763;
+  }
+  & .relations .gacha-ad:has(dd:nth-of-type(3)) dd .window-content:has(> .relation-banner) {
+    padding:5px; grid-template-columns:minmax(0,1fr) 41%; align-items:center;
+  }
+  & .relations .gacha-ad:has(dd:nth-of-type(3)) .window-content .relation-name {font-size:15px;}
+}

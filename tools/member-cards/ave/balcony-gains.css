@@ -1,0 +1,27 @@
+main[data-band-id="2"] .numbers.stage-sections { margin-inline:-4px; }
+.stage-sections svg{display:block;width:100%;height:auto}
+.stage-sections text{fill:#452e38;font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums lining-nums}
+.stage-sections .title,.stage-sections .stage-label,.stage-sections .section-name{font-family:SimSun,serif;font-weight:700}
+.stage-sections .title{font-size:21px}
+.stage-sections .stage-label{font-size:15px}
+.stage-sections .headline{font-size:32px;font-family:Georgia,"Times New Roman",serif;font-weight:700;fill:#602d40}
+.stage-sections .section-name{font-size:17px;fill:#f5e6dc;letter-spacing:.08em}
+.stage-sections .front-value{font-size:22px;font-weight:650;fill:#fff5e8}
+.stage-sections .row-label{font-size:18px;font-weight:600}
+.stage-sections .value,.stage-sections .row-total{font-size:20px;font-weight:550}
+.stage-sections .seat-data { position:absolute; width:1px; height:1px; clip-path:inset(100%); overflow:hidden; }
+
+.stage-sections .growth-count { font-size:15px; font-weight:400; fill:#6e5962; }
+
+.ave-member-dock { display:grid; grid-template-columns:minmax(min-content,43%) minmax(0,1fr); gap:3px; align-items:start; }
+.ave-member-dock .debut {white-space:nowrap}
+.ave-member-dock .member-line {
+  display:flex; flex-wrap:wrap; align-items:center;
+  width:100%; gap:2px 5px;
+}
+.ave-member-dock .member-line .band { max-width:44px; max-height:22px; }
+.ave-stage-name { color:#735662; font:italic 12px/1.15 Georgia,serif; }
+.ave-member-dock .member-line strong {
+  flex-basis:100%; font:700 19px/1.25 SimSun,serif; color:#452c38;
+}
+.ave-member-instruments { display:block; width:100%; height:auto; align-self:center; }

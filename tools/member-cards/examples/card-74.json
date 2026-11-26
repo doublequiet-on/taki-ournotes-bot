@@ -1,0 +1,232 @@
+{
+  "id": 74,
+  "title": "猫咪们的万圣节",
+  "jpTitle": "ねこたちのハロウィン",
+  "character": "要乐奈",
+  "band": "MyGO!!!!!",
+  "bandColor": "#3388BB",
+  "category": "活动奖励",
+  "maxLevel": 80,
+  "stats": [
+    {
+      "label": "表演",
+      "initial": 6524,
+      "max": 16011,
+      "color": "#FF8899"
+    },
+    {
+      "label": "技巧",
+      "initial": 8624,
+      "max": 21164,
+      "color": "#77BBDD"
+    },
+    {
+      "label": "形象",
+      "initial": 6075,
+      "max": 14908,
+      "color": "#FFDD88"
+    }
+  ],
+  "skills": [
+    {
+      "role": "队长",
+      "name": "MyGO!!!!!技巧值UP",
+      "icon": "icon_skill_parameter_mygo_1.png",
+      "clauses": [
+        {
+          "condition": "MyGO!!!!! 成员的技巧值提升",
+          "values": [
+            "42%",
+            "51%",
+            "60%",
+            "72%",
+            "102%"
+          ]
+        }
+      ],
+      "kind": "leader",
+      "skillId": 22
+    },
+    {
+      "role": "演出",
+      "name": "得分UP（LIFE加成）",
+      "icon": "icon_skill_scoreup.png",
+      "clauses": [
+        {
+          "condition": "5 秒内得分提升",
+          "values": [
+            "30%",
+            "40%",
+            "50%",
+            "60%",
+            "90%"
+          ]
+        },
+        {
+          "condition": "发动时 LIFE ≥ 700，得分提升至",
+          "values": [
+            "50%",
+            "60%",
+            "70%",
+            "80%",
+            "110%"
+          ]
+        }
+      ],
+      "kind": "live",
+      "skillId": 6,
+      "annotation": {
+        "type": "lifeScore",
+        "values": [
+          [
+            3000,
+            4000,
+            5000,
+            6000,
+            9000
+          ],
+          [
+            5000,
+            6000,
+            7000,
+            8000,
+            11000
+          ]
+        ],
+        "seconds": 5,
+        "threshold": 700
+      }
+    },
+    {
+      "role": "激奏",
+      "name": "激奏COMBO数获得量UP（LIFE加成）",
+      "icon": "icon_skill_combo.png",
+      "clauses": [
+        {
+          "condition": "激奏 COMBO 不断时，激奏 COMBO 获得量 +1。达到 LIFE 门槛时改为 +3。",
+          "values": [
+            "950",
+            "900",
+            "850",
+            "800",
+            "700"
+          ],
+          "label": "LIFE 门槛"
+        }
+      ],
+      "kind": "gekisou",
+      "skillId": 18
+    }
+  ],
+  "release": "r-446fa5ab7a4d6ee030a2",
+  "portrait": "portrait-74.png",
+  "frame": "frame-SR.png",
+  "rarityIcon": "RarityIconCenter_SR.png",
+  "attributeIcon": "attr-Blue.png",
+  "attributeName": "蓝色",
+  "rarityLabel": "SR",
+  "relations": {
+    "events": [
+      {
+        "id": 4,
+        "name": "A day～#HalloweenSnap～",
+        "role": "加成",
+        "cardBonuses": {
+          "scope": "活动 PT、本卡活动综合力",
+          "ranks": "卡牌 Rank 1 → 5",
+          "rows": [
+            {
+              "name": "合计",
+              "values": [
+                45,
+                52.5,
+                60,
+                67.5,
+                75
+              ]
+            },
+            {
+              "name": "其中专属",
+              "values": [
+                15,
+                17.5,
+                20,
+                22.5,
+                25
+              ]
+            }
+          ]
+        },
+        "isReward": true,
+        "rewardLabel": "累计 75,000 PT 获得本卡",
+        "banner": "event-4.png",
+        "targets": {
+          "attributes": [
+            {
+              "image": "attr-Blue.png",
+              "name": "绀碧"
+            },
+            {
+              "image": "attr-Green.png",
+              "name": "翡翠"
+            },
+            {
+              "image": "attr-Yellow.png",
+              "name": "琉金"
+            }
+          ],
+          "bands": [
+            {
+              "image": "band_Icon_mygo.png",
+              "name": "MyGO!!!!!"
+            },
+            {
+              "image": "band-2-emblem.png",
+              "name": "Ave Mujica"
+            }
+          ]
+        }
+      }
+    ],
+    "gachas": []
+  },
+  "bandId": 1,
+  "cultivation": {
+    "trainingStage": 5,
+    "trainingBonus": 5207,
+    "awakeningStage": 5,
+    "awakeningBonus": 5207,
+    "total": 62497,
+    "maxLevel": 80,
+    "stats": [
+      {
+        "key": "performance",
+        "initial": 6524,
+        "base": 16011,
+        "trainingBonus": 1601,
+        "awakeningBonus": 1601,
+        "full": 19213
+      },
+      {
+        "key": "technique",
+        "initial": 8624,
+        "base": 21164,
+        "trainingBonus": 2116,
+        "awakeningBonus": 2116,
+        "full": 25396
+      },
+      {
+        "key": "visual",
+        "initial": 6075,
+        "base": 14908,
+        "trainingBonus": 1490,
+        "awakeningBonus": 1490,
+        "full": 17888
+      }
+    ]
+  },
+  "jpDebutDate": "2026-10-28",
+  "characterId": 3,
+  "logo": "wordmark-1.png",
+  "emblem": "band_Icon_mygo.png"
+}

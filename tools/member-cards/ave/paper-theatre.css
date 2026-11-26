@@ -1,0 +1,70 @@
+main[data-band-id="2"] .lyric-page h1 {
+  font-family: "Ave Serif SC",serif;
+  font-weight: 760;
+  letter-spacing: -.025em;
+  color: #f9ebdc;
+  text-shadow: 0 .6px #6d4333, 0 1.4px 1px #130a1190;
+  font-synthesis: none;
+}
+main[data-band-id="2"] .ave-member-dock .member-line strong,
+main[data-band-id="2"] .lyric-page .section,
+main[data-band-id="2"] .gachas dt {font-family:"Ave Serif SC",serif;font-weight:670;font-synthesis:none}
+main[data-band-id="2"] .ave-stage-name {
+  font: 610 14px/1.1 "Ave Incised",serif;
+  letter-spacing:.025em;
+  color:#e4c6bd;
+}
+main[data-band-id="2"] .jp {font-family:"Ave Mincho",serif;font-weight:500;letter-spacing:.05em;font-synthesis:none}
+main[data-band-id="2"] .events .poster-masthead,
+main[data-band-id="2"] .gachas dd .relation-name,
+main[data-band-id="2"] .stage-sections :is(.title,.stage-label,.section-name) {font-family:"Ave Serif SC",serif;font-weight:640}
+main[data-band-id="2"] :is(.traits,.ave-source .condition,.ave-source .skillhead,.ave-source .level,.bonus-table td,.stage-sections .headline,.stage-sections .row-total,.stage-sections .front-value,.stage-sections .value) {
+  font-family:"Roboto Variable","Noto Sans SC Variable",sans-serif;
+  font-variant-numeric:lining-nums tabular-nums;
+}
+main[data-band-id="2"] .gachas .relation-id b {font-family:"Ave Incised",serif;font-weight:650;font-variant-numeric:lining-nums}
+
+/* The shallow, cut-through arch sits behind the velvet and clear of the printed sheet. */
+.ave-stage {
+  background-image: url("auditorium-arch.svg"),
+    radial-gradient(ellipse at 24% 104%,#8c27496b,transparent 65%),
+    linear-gradient(110deg,#0d091897,#240d1c80 48%,#100a17bd),url("velvet.jpg");
+  background-position: center top,center,center,center;
+  background-size: 100% 55px,cover,cover,cover;
+  background-repeat:no-repeat;
+}
+.ave-book {
+  box-shadow: 0 -1px 0 #967983,1px 2px 0 #543845,1px 3px 0 #886774,
+    2px 4px 0 #3f2a36,2px 5px 0 #604651,3px 7px 2px #1c111b,4px 12px 15px #06040acc;
+}
+.ave-border {border-color:#bd8f8b65;box-shadow:inset 0 0 0 1.2px #270f203d}
+.ave-book > main[data-band-id="2"] > .art-page figure {
+  background:linear-gradient(120deg,#735867,#281723 14%,#1c1420 80%,#593848);
+  box-shadow:inset 0 .7px #c2a39c88,0 2px 3px #120913b3;
+}
+.ave-puppet-scene > svg {
+  width: min(100%, calc(100cqh * 536 / 486));
+}
+main[data-band-id="2"] .lyric-page .skills > article {
+  background:
+    radial-gradient(ellipse 97% 136% at 0 120%,#88234356,transparent 66%),
+    linear-gradient(107deg,#391c2a,#331322 10%,#2d1421 65%,#3e1929);
+  box-shadow:inset 0 0 0 .8px #422b27,inset 0 0 0 1.8px #b49162,
+    inset 0 0 0 2.6px #6d4c35,inset 1.3px 2.4px 6px 2.5px #1209128c,
+    0 .65px #d3a671,-.8px 2.1px 2.7px #170912bf;
+}
+main[data-band-id="2"] .ave-source .sequence {
+  grid-template-columns:none;
+  grid-auto-flow:column;
+  grid-auto-columns:minmax(0,1fr);
+  background:linear-gradient(90deg,#190f184d,#26131d55 65%,#9b594520);
+  box-shadow:inset 0 1px 1.6px #1b0c184c;
+}
+main[data-band-id="2"] .ave-track-caption {
+  margin-top:5px;
+  color:#e1c2ac;
+  font:600 11.5px/1.35 "Ave Serif SC",serif;
+  letter-spacing:.045em;
+}
+main[data-band-id="2"] .ave-track-caption + .sequence {margin-top:2px}
+main[data-band-id="2"] .ave-source .level:last-child:not([data-level="5"]) {color:inherit;font-weight:inherit}

@@ -1,0 +1,171 @@
+@font-face {
+  font-family: "MyGO Lyric Notebook";
+  src: url("mygo-lyric-regular.ttf") format("truetype");
+  font-weight: 100 499;
+}
+@font-face {
+  font-family: "MyGO Lyric Notebook";
+  src: url("mygo-lyric-medium.ttf") format("truetype");
+  font-weight: 500 900;
+}
+main[data-band-id="1"] :is(.lyric-page, .relation-page),
+main[data-band-id="1"] :is(.lyric-page, .relation-page) :is(h1,h2,h3,.jp,.level,.levels-label,.relation-id,.bonus-table,.traits) {
+  font-family: "MyGO Lyric Notebook", "Roboto Variable", "Noto Sans SC Variable", sans-serif;
+  font-synthesis: none;
+}
+main[data-band-id="1"] .member-line .band { max-width:72px; max-height:26px; }
+main[data-band-id="1"] .member-line strong { font-size:19px; }
+main[data-band-id="1"] .traits { column-gap:6px; }
+main[data-band-id="1"] .traits span + span::before { content:none; }
+main[data-band-id="1"] .lyric-page header h1 { font-weight: 400; }
+main[data-band-id="1"] .lyric-page .jp { letter-spacing: .025em; }
+
+/* The three systems share the same paper and reading width. */
+main[data-band-id="1"] .corner-print { width:min(60%,calc(100% - 138px),192px); height:82px; right:3px; top:2px; }
+main[data-band-id="1"] .lyric-page h1 { margin-top:24px; }
+main[data-band-id="1"] .skills { gap:12px; }
+main[data-band-id="1"] .lyric-page article {
+  position:relative;
+  padding:38px 8px 9px;
+  margin-inline:0;
+  border:0;
+}
+main[data-band-id="1"] .lyric-page article::before {
+  content:""; position:absolute; inset:0 0 auto; height:38px;
+  background:var(--rehearsal-staff) left top / 100% 38px no-repeat;
+  pointer-events:none;
+}
+main[data-band-id="1"] .lyric-page article::after {
+  content:"";
+  position:absolute;
+  inset:29.5px 0 0;
+  background:url('../graphics/mygo-score-frame.svg') center / 100% 100% no-repeat;
+  pointer-events:none;
+}
+main[data-band-id="1"] .skills .effect:last-child:has(.sequence) .sequence {
+  box-shadow:none;
+}
+main[data-band-id="1"] [data-skill-role="队长"] { --rehearsal-staff:url('../graphics/mygo-rehearsal-staves.svg#leader'); }
+main[data-band-id="1"] [data-skill-role="演出"] { --rehearsal-staff:url('../graphics/mygo-rehearsal-staves.svg#live'); }
+main[data-band-id="1"] [data-skill-role="激奏"] { --rehearsal-staff:url('../graphics/mygo-rehearsal-staves.svg#rush'); }
+main[data-band-id="1"] .score-pair col:first-child { width:72px; }
+main[data-band-id="1"] .lyric-page article .condition { color:var(--text); }
+
+.limit-note { white-space:nowrap; }
+.limit-note > span { position:relative; }
+.member-limit { padding-inline:4px; }
+.limit-note > span::after {
+  content:""; position:absolute; pointer-events:none;
+  background-position:center; background-size:100% 100%; background-repeat:no-repeat;
+}
+.member-limit::after {
+  inset:-4.5px -2px -3.5px;
+  background-image:url('../graphics/mygo-pencil-marks.svg#ring');
+}
+.bonus-cap::after {
+  left:calc(-1em - 5px); right:-1px; bottom:-5px; height:6px;
+  background-image:url('../graphics/mygo-pencil-marks.svg#join');
+}
+main[data-band-id="1"] :is(.score-pair tbody, .ladder-rows) { position:relative; }
+main[data-band-id="1"] :is(.score-pair tbody, .ladder-rows)::before {
+  content:""; position:absolute; left:-1px; top:9px; bottom:11px; width:6px;
+  background:url('../graphics/mygo-pencil-marks.svg#brace') center / 100% 100% no-repeat;
+  pointer-events:none;
+}
+main[data-band-id="1"] :is(.score-pair tbody th, .ladder-rows .threshold) { padding-left:8px; }
+main[data-band-id="1"] .score-pair tbody th { white-space:nowrap; }
+main[data-band-id="1"] .score-pair tr + tr > * {
+  border-top-color:transparent;
+  background:linear-gradient(#89a2aa75,#89a2aa75) top right / 100% 1px no-repeat;
+}
+main[data-band-id="1"] .score-pair tr + tr > th { background-size:calc(100% - 8px) 1px; }
+
+
+/* The observation belongs to the outer foot of the final fold in either layout. */
+main[data-band-id="1"] > section:last-child { padding-bottom:56px; }
+main[data-band-id="1"] > section:last-child::before {
+  content:""; position:absolute; right:10px; bottom:7px; width:128px; height:42px;
+  pointer-events:none; background:url('../graphics/mygo-pebble-study.svg') center / contain no-repeat;
+}
+
+/* Pool captions read from a common hanging edge beside their IDs. */
+main[data-band-id="1"] .relations .gachas dd {
+  display:block;
+  padding-block:7px;
+}
+main[data-band-id="1"]:has(.relation-page) .relations .gachas dd + dd { margin-top:5px; }
+main[data-band-id="1"]:has(.relation-page) .relations .gachas dd .relation-banner {
+  width:min(90%,175px);
+  max-width:none;
+  margin-bottom:4px;
+}
+main[data-band-id="1"]:has(.relation-page) .relations .gachas dd .relation-caption {
+  display:grid;
+  grid-template-columns:max-content minmax(0,1fr);
+  align-items:baseline;
+  column-gap:5px;
+  width:100%;
+  max-width:none;
+}
+main[data-band-id="1"] .gachas .relation-caption .relation-id {
+  grid-area:auto; margin:0; color:#526d79;
+}
+main[data-band-id="1"] .gachas .relation-caption .relation-name {
+  grid-area:auto; min-width:0; line-height:1.4; text-wrap:wrap;
+}
+main[data-band-id="1"] .gachas .pool-qualifier { display:inline-block; max-width:100%; }
+main[data-band-id="1"]:has(.relation-page .bonus-table) { width:790px; }
+main[data-band-id="1"] .events .relation-banner { width:96%; }
+
+main[data-band-id="1"] .bonus-table {
+  table-layout:auto; margin-top:6px; color:#405a68;
+}
+main[data-band-id="1"] .bonus-table caption { margin-bottom:6px; }
+main[data-band-id="1"] .bonus-table thead th:first-child { white-space:nowrap; }
+main[data-band-id="1"] .bonus-table tbody :is(th,td) { padding:5px 0; }
+main[data-band-id="1"] .bonus-table thead th { padding:0 0 5px; }
+main[data-band-id="1"] .bonus-table .included th { padding-left:1px; }
+main[data-band-id="1"] .bonus-table tr > :not(:first-child) { padding-left:4px; }
+main[data-band-id="1"] .bonus-table .included { color:var(--secondary); }
+main[data-band-id="1"] .bonus-table tbody tr:not(.included) td:last-child {
+  color:var(--display); font-weight:550;
+}
+/* Leave the full measure below the title for conditions and level values. */
+main[data-band-id="1"] .lyric-page > .section { margin-top:13px; }
+main[data-band-id="1"] .skills article[data-skill-role] .skillhead {
+  position:relative; align-content:center; min-height:32px; padding-inline-end:38px;
+}
+main[data-band-id="1"] .skillhead::after {
+  content:""; position:absolute; top:50%; right:2px; width:32px; height:32px;
+  transform:translateY(-50%); background:var(--snack) center / contain no-repeat; pointer-events:none;
+}
+main[data-band-id="1"] [data-skill-role="队长"] { --snack:url('../graphics/mygo-sanzi.svg'); }
+main[data-band-id="1"] [data-skill-role="演出"] { --snack:url('../graphics/mygo-parfait.svg'); }
+main[data-band-id="1"] [data-skill-role="激奏"] { --snack:url('../graphics/mygo-konpeito.svg'); }
+main[data-band-id="1"] .skills:has(.score-pair) .effect .sequence {
+  padding-left:72px;
+}
+main[data-band-id="1"] .lyric-page > .section::after {
+  content:""; flex:0 0 68px; align-self:center; height:27px; margin-left:auto; margin-right:5px;
+  background:url('../graphics/mygo-penguin-bandage.svg') center / contain no-repeat;
+  pointer-events:none;
+}
+
+main[data-band-id="1"] .traits:has(.debut) { flex-wrap:wrap; row-gap:2px; }
+main[data-band-id="1"] .debut { flex-basis:100%; font-size:12px; line-height:16px; }
+main[data-band-id="1"] header:has(.debut) h1 { margin-top:9px; }
+main[data-band-id="1"] .numbers:has(+ .cultivation) { margin-bottom:2px; }
+main[data-band-id="1"] .numbers:has(+ .cultivation) .stats thead {
+  font-family:"MyGO Lyric Notebook","Noto Sans SC Variable",sans-serif;
+}
+main[data-band-id="1"] .cultivation {
+  color:var(--text); font-family:"MyGO Lyric Notebook","Noto Sans SC Variable",sans-serif;
+}
+.cultivation .growth-bonuses, .cultivation .growth-total {
+  display:flex; justify-content:space-between; align-items:baseline; gap:5px; white-space:nowrap;
+}
+.growth-bonuses { color:var(--secondary); font-size:13px; line-height:22px; }
+.growth-bonuses b { font-weight:400; color:var(--value); }
+.growth-total { font-size:15px; line-height:22px; }
+.growth-total strong { font-family:"MyGO Notebook","MyGO Lyric Notebook",sans-serif; font-size:22px; font-weight:520; line-height:1; color:var(--display); }
+main[data-band-id="1"] .cultivation + .plate-illustration { margin-top:6px; }

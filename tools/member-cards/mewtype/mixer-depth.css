@@ -1,0 +1,19 @@
+/* A satin lilac bezel catches the same upper-left light as the mixer. */
+.desktop-bar {
+  background:linear-gradient(175deg,#e3d6e5,#d1bfd6 57%,#c4b2ca);
+  box-shadow:inset 0 1px #f7edf6,inset 0 -1px #ae9cb6;
+}
+.desktop-bar::before {filter:drop-shadow(0 .55px .55px #725b808f);}
+#print main.foldsheet[data-band-id="3"] > .art-page {
+  & .portrait-frame {
+    box-shadow:-.7px -1px 0 #fffaf5,1.5px 2px 0 #bbadbf,2.5px 3px 0 #a59aaa,3px 6px 9px #78627e36;
+  }
+  & .console-unit {
+    border-color:#fbf1ef #b8a6bc #a791aa #e4cfd9;
+    box-shadow:inset 1px 1px 1px #fff9f5,inset -1px -1px 1px #c0acbf,
+      1px 1px #d7c6d5,2px 2px #c7b7ca,3px 3px #b2a3bc,4px 4px #a497ad,
+      4px 7px 6px #6f53793b,5px 9px 10px #89768f26;
+  }
+  & .console-bank .level-fill {stroke-width:2.25; stroke-linecap:round;}
+  & .console-unit > .master-axis {border-top-color:#ae9caf;box-shadow:inset 0 1px #fffbf5;}
+}

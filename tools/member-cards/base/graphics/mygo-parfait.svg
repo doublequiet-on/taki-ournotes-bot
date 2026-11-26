@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="71 1 54 73" fill="none" stroke-linecap="round" stroke-linejoin="round"><title>抹茶芭菲</title>
+<!-- Fluted glass, two matcha layers, shiratama, wafer and a spoon. -->
+<g transform="translate(70 0) rotate(4 27 40)" stroke="#536765" stroke-width="1.3">
+ <path d="m12 29-5-20 6.5-2.2L20 28Z" fill="#cfb68d"/>
+ <path d="m9.5 12 5.1 3.1m-4.1.6 5.4 3.1m-4.1.7 5.5 3m-6.8-13.1 2.6 2" stroke="#a18971" stroke-width=".8"/>
+ <path d="m37 29 7-18.7C43 6 48.4 1.2 50.5 3c2.8 2.8-1.1 8.4-4.3 9l-6.8 18" fill="#c5d1ce" stroke-width=".95"/>
+ <path d="M8 31q17-6 36-1c-2.6 13.6-7.1 22-15.5 26l-1 8.6c1 2.2 9 1.7 10.8 5.1-5 3-19.7 3-24 .2 1-2.5 9.7-3.5 10.3-5.8l-.5-8.2C16 53 10.7 42.3 8 31Z" fill="#e5eeea"/>
+ <path d="M11 38c6-2.6 11 3.4 16 1.5 5.8-2.4 10.3-4.3 14.5-3.7l-2.6 6.1q-7.6 5-13.6 3.1-5-3.1-11.6-1.4Z" fill="#96a77b" stroke="none"/>
+ <path d="M16.2 46q7.3-1.7 10.7 1.1 4.5 1.6 11-1.5-5.3 8.5-11 9-5.2-.6-10.7-8.6Z" fill="#a89779" stroke="none"/>
+ <path d="M11.5 30.5c-.7-8 4.6-14.3 12-14.9 8.5-.6 13.5 5.4 13.5 13.5-4.7 4-19.4 4-25.5 1.4Z" fill="#9eae7f"/>
+ <path d="M15.6 24.4q3-5.9 8.9-5.8m2.5-.2 3 .9" stroke="#d9dfb9" stroke-width="1.4"/>
+ <path d="M7.7 29q.8-4.2 5.6-4.2 5.3.5 5 5.3c-.4 4.6-11.5 4.9-10.6-1.1Z" fill="#f3edda"/>
+ <path d="M33 28c1.4-6.4 10.4-6.1 11 0 .5 5.3-11.6 6.4-11 0Z" fill="#f3edda"/>
+ <g fill="#816c64" stroke-width=".7"><ellipse cx="24.1" cy="29.7" rx="2.6" ry="1.9"/><ellipse cx="29" cy="28.1" rx="2.4" ry="1.8"/><ellipse cx="29.5" cy="31.1" rx="2" ry="1.4"/></g>
+ <path d="M8 31q17 5.6 36.2-.8m-31.7 5 3.5 8.2m5.1-7.3 2 9.3m14-10.3-1 3.8M17 68.9q8.7 2.1 18.4-.1" stroke="#849998" stroke-width=".85"/>
+</g>
+</svg>

@@ -1,0 +1,124 @@
+/* MewType's single sleeve and the dot screens of the mini photo prints. */
+main[data-band-id="3"] {
+  --paper:#fff9f2; --text:#352b3c; --display:#642542; --heading:#692946;
+  --value:#433448; --secondary:#665463; --accent:#ae395f;
+  --dots:radial-gradient(#d6748f55 .75px,transparent .9px) 0 0 / 4px 4px;
+}
+main:has(.relation-page .bonus-table) { width:862px; }
+main:has(.ladder):not(:has(.relation-page)) { width:588px; }
+.art-page {
+  background:linear-gradient(90deg,transparent 92%,#71495724),
+    linear-gradient(152deg,#ffcfce,#fae5d9 43%,#fff8ef 65%,#ffe8df);
+}
+.art-page::before { content:""; position:absolute; z-index:-1; inset:0; background:var(--dots); mask-image:linear-gradient(133deg,#000,transparent 54%,#0008); }
+.portrait-frame {filter:drop-shadow(.6px 1px .5px #48324454) drop-shadow(1.7px 2.8px 2px #69495542);}
+.numbers { margin:8px -4px 2px; padding:4px 5px 8px; border-bottom:1px solid #dcadad; }
+.ruled .reading td { font-weight:460; }
+.stats.ruled .reading td:last-child { font-size:calc(17px + 3px * var(--stat-type-room,0)); }
+.stats.ruled .rail td { padding-bottom:5px; background:linear-gradient(0deg,#af798627 1px,transparent 1px); }
+.stats .total { font-weight:710; color:var(--display); }
+.cultivation { font-size:12px; }
+.growth-bonuses,.growth-total { display:flex; align-items:baseline; justify-content:space-between; }
+.growth-total strong { font-size:22px; }
+.plate-illustration { flex:1 0 103px; margin:8px -12px -4px -15px; min-height:142px; background:url('../left-yokan-still-giant.svg') left bottom / 100% auto no-repeat; mix-blend-mode:normal; }
+.lyric-page {
+  padding:16px 14px 20px 16px;
+  background:linear-gradient(90deg,#6044553c 0,#76566824 2px,#926c7210 9px,transparent 27px),
+    linear-gradient(90deg,transparent 92%,#fffdf4b3),
+    linear-gradient(145deg,#fffaf3,#fff9f5 58%,#fce9e5);
+}
+.printed-edge { opacity:.045; width:63%; }
+.corner-print { width:79px; height:27px; top:0; right:0; background:var(--dots); clip-path:polygon(29% 0,100% 0,100% 100%); }
+.member-line .band { max-height:32px; max-width:62px; }
+.member-line strong { font-size:18px; font-weight:650; }
+.traits { font-size:12px; letter-spacing:.02em; }
+.traits .debut { margin-left:6px; }
+.lyric-page header h1 { margin:13px 0 4px; font-weight:810; letter-spacing:-.045em; color:var(--display); }
+.lyric-page h1 .title-phrase:first-child:has(+ wbr) {font-weight:650;}
+.jp { font-size:13px; }
+.lyric-page > .section { font-size:17px; font-weight:700; margin:17px 0 11px; }
+.section .levels-label { font-size:12px; font-weight:450; }
+.section::after { content:""; flex:1; align-self:center; height:3px; background:repeating-linear-gradient(115deg,#c65b774b 0 2px,transparent 2px 5px); margin-left:4px; }
+.skills { gap:14px; }
+.skills article { padding:9px 9px 10px; border:1px solid #cc9da7; border-top:2px solid var(--role); border-radius:2px; background:#fffefa88; --role:#b6446d; }
+article[data-skill-role="演出"] { --role:#3b819e; }
+article[data-skill-role="激奏"] { --role:#bd873c; }
+.skills .kind { font-size:12px; color:var(--secondary); font-weight:550; }
+.skillhead h3 { font-size:16px; font-weight:630; line-height:1.36; }
+.skills .condition { font-size:14px; line-height:1.45; }
+.skills .effect .sequence { gap:0; margin-block:3px; }
+.skills .level { text-align:right; font-weight:500; }
+.skills .sequence > .level:last-child,.score-pair td:last-child .level { color:var(--display); font-weight:710; }
+.skills:has(.ladder) .effect .sequence { padding-left:58px; }
+.skills:has(.score-pair) .effect .sequence { padding-left:72px; }
+.score-pair col:first-child { width:72px; }
+.ladder-rows,.score-pair tbody { position:relative; }
+.ladder-rows::before,.score-pair tbody::before {
+  content:""; position:absolute; top:8px; bottom:8px; left:0; width:5px;
+  border:solid #d56b83; border-width:1.5px 0 1.5px 1.5px; border-radius:55% 0 0 40%; transform:rotate(2deg);
+}
+.ladder-rows .threshold,.score-pair th { padding-left:8px; }
+.limit-note { white-space:nowrap; }
+.member-limit { border:1px solid #d56b83; border-radius:48%; padding:0 2px; }
+.bonus-cap { border-bottom:2px solid #de879c; }
+.relation-page {background:linear-gradient(90deg,#71515e42 0,#83656c23 4px,#967a7a12 12px,transparent 29px),linear-gradient(125deg,#f7eee1,#fff8ee 70%,#f9e9e3);}
+.relations dt { font-weight:660; }
+.relation-page .events::before {background:linear-gradient(120deg,#fcf4df,#fff9e8 60%,#fcf2dc);}
+.relation-page .clipping::after {background:repeating-linear-gradient(45deg,#ffebed5c 0 2px,transparent 2px 5px),#e69eb1cb;}
+main[data-band-id="3"] .relations .gachas dd {display:block; background:linear-gradient(100deg,#f7dbe0,#fce8e8 64%,#f3d6dc); }
+main[data-band-id="3"] .relations .gachas dd .relation-banner { width:100%; max-width:none; margin-bottom:4px; }
+main[data-band-id="3"] .relations .gachas dd .relation-caption { display:grid; width:100%; max-width:none; grid-template-columns:max-content minmax(0,1fr); gap:6px; align-items:baseline; }
+.gachas .relation-caption :is(.relation-name,.relation-id) { grid-area:auto; }
+.relations .events .clipping > .relation-banner {width:100%;max-width:none;}
+.bonus-table caption { font-size:12.5px; }
+.bonus-table tr > :not(:first-child) {padding-left:2px;}
+.bonus-table .included th {white-space:nowrap;}
+.return-print { background:var(--dots); mask-image:linear-gradient(142deg,transparent 50%,#0009); }
+
+@font-face {
+  font-family:"ZCOOL KuaiLe"; src:url("/media/fonts/ZCOOLKuaiLe-Regular.ttf") format("truetype"); font-weight:400;
+}
+@font-face {
+  font-family:"LXGW WenKai"; src:url("/media/fonts/LXGWWenKai-Regular.ttf") format("truetype"); font-weight:100 499;
+}
+@font-face {
+  font-family:"LXGW WenKai"; src:url("/media/fonts/LXGWWenKai-Medium.ttf") format("truetype"); font-weight:500 900;
+}
+@font-face {
+  font-family:"Klee One"; src:url("/media/fonts/KleeOne-SemiBold.ttf") format("truetype"); font-weight:600;
+}
+body { font-family:"LXGW WenKai","Noto Sans SC Variable",sans-serif; font-synthesis:none; }
+.lyric-page { padding-top:8px; }
+/* The instruments and the member credits share one header above the full-width title. */
+.masthead { display:grid; grid-template-columns:fit-content(54%) minmax(0,1fr); gap:6px; align-items:center; }
+.masthead .identity { min-width:0; }
+.masthead .member-line { gap:5px; max-width:100%; }
+.masthead .member-line .band { max-width:44px; max-height:25px; }
+.masthead .member-line strong { font-size:18px; line-height:1.2; word-break:keep-all; }
+.masthead .traits { flex-wrap:wrap; }
+.masthead .band-shelf { display:block; width:100%; height:auto; }
+
+.member-line strong { font-size:20px; }
+.lyric-page header h1, .lyric-page h1 .title-phrase:first-child:has(+ wbr) {
+  font-family:"ZCOOL KuaiLe","LXGW WenKai",sans-serif; font-weight:400; letter-spacing:-.017em;
+}
+.lyric-page header h1 { margin:8px 0 5px; font-size:39px; line-height:1.09; }
+.lyric-page header h1 .title-phrase:first-child:has(+ wbr) { font-size:30px; }
+.lyric-page header h1 .title-phrase:last-child {
+  background:linear-gradient(178deg,transparent 76%,#f9d98194 77% 91%,transparent 92%);
+}
+.jp { font:600 14px/1.4 "Klee One","Noto Sans JP Variable",sans-serif; }
+.stats thead th, .relations dt, .skills .kind, .section { font-weight:600; }
+.skills .level { font-weight:400; font-variant-numeric:tabular-nums; }
+.skillhead h3 { font-size:17px; }
+.skills .condition { font-size:15px; }
+.skills .level, .ladder-rows .level { font-size:15px; }
+.skills .sequence > .level:last-child { font-weight:600; }
+.skills .kind,.ladder-rows .threshold { font-size:13px; }
+.skills article { padding-top:8px; }
+.skills { --condition-column:84px; }
+.ladder-rows { --label-width:var(--condition-column); }
+.skills:has(.ladder) .effect .sequence { padding-left:var(--condition-column); }
+.ruled col:nth-child(1) { width:26%; }
+.ruled col:nth-child(3) { width:44%; }
+.stats.ruled .total { font-size:23px; }

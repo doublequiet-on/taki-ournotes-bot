@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-46 -1 171 57" fill="none" stroke-linecap="round" stroke-linejoin="round">
+<title>同一颗有缺口的石子，翻面观察与爬到石边的西瓜虫</title>
+<!-- A shallow cleft cuts the pale seam on both faces. -->
+<g transform="translate(4 0) rotate(-8 29 25)">
+ <path d="M5 30Q8 23 15 13q4-5 11-6l8 2 2.4 4.6 4.6-3q9 3 13 13l-1.8 6.7Q42 36 29 38L11 37Z" fill="#d5d7c9" fill-opacity=".6" stroke="#5b7079" stroke-width="1.35"/>
+ <path d="M7 30q9 3 15 1l14-6 16-2-1 7-14 6-9 2-17-2Z" fill="#7b8990" opacity=".17"/>
+ <path d="M12 29q7-2 10-7l5-7 7-4m3.5 3.9 2.6-2.1M9 33q8 2 12 1m17-2 8-3" stroke="#829197" stroke-width="1.05"/>
+ <path d="m18 14 5-4 5-.8m17 3.8 3.8 3.2M12 38q10 2.2 16 1.6" stroke="#8b9a9d" stroke-width=".7"/>
+ <path d="m41 28 2-1m-5 3 1-.6m7-3.7.9-.5" stroke="#78878a" stroke-width="1"/>
+</g>
+<g transform="translate(70 11) rotate(9 22 18)">
+ <path d="M3 19q4-8 12-12L32 3l8 2.5q6 5 7.5 11.9l-6 8.2-4-1.5-1.8 4.4Q21 34 8 29Z" fill="#c6cbbb" fill-opacity=".45" stroke="#5c7079" stroke-width="1.35"/>
+ <path d="M4 19q13 7 22 4l16-6 5.5.4-6 8.2-4-1.5-1.8 4.4q-12 4-27 1Z" fill="#80898e" opacity=".2"/>
+ <path d="m12 13 4.8-.9 5.6 2.3 5.1 5.8 8.4 5.1m-19-17 7.5-2M8 26q8 4 16.5 3M32 22.8l4 1.9" stroke="#889391" stroke-width=".95"/>
+ <path d="m10 20 5 2m-2-4 6 2.9m-2-4 4 2.2m1.6-.3 2.6 1.9m11 12 3-2" stroke="#78888a" stroke-width=".68"/>
+</g>
+<g transform="translate(-39 28) rotate(-14 18 10)" stroke="#536672" stroke-width="1.05">
+  <!-- Near-side walking legs remain visible below the overlapping plates. -->
+  <path d="m8 13-2 4-3 1m9-4-1 4-3 2m8-6v5l-3 2m7-7 1 4-2 3m6-8 2 4-1 3m4-8 3 3v3m1-8 3 2 1 2"/>
+  <path d="M2 11C3 6 11 2 19 2c8-.3 14 2.3 18 7l-3 4-5 2-11 1.2-10-1.4-4-1Z" fill="#95a3a5" stroke-width="1.25"/>
+  <path d="M7 7q.2 4 3 7m1-9.5q.1 5.7 3.5 10.7m1-11.7q.6 6.5 4 12m1-12.2q.7 5.7 4.4 11.6m.4-11q1.4 5.4 4.6 10m-.3-8.4q1.3 3.8 4.6 7m-1.4-5.5 3.5 3.3" stroke="#566d76"/>
+  <path d="M10 6.7q6.8-3.8 14.2-2" stroke="#d9ded8" stroke-width=".95"/>
+  <path d="M4.1 10.7 .5 8.5-2 5.6m5.5 6.3-4 .1-2.3-1.5" />
+  <circle cx="5.4" cy="10.3" r=".77" fill="#344d59" stroke="none"/>
+</g>
+</svg>

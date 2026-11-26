@@ -1,0 +1,286 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 438 182" fill="none" stroke="#334853" stroke-linecap="round" stroke-linejoin="round">
+  <title>MyGO!!!!! 舞台速写，从观众左侧起依次是爱音、爽世、灯、立希、乐奈</title>
+  <defs>
+    <radialGradient id="burst">
+      <stop stop-color="#d2a155" />
+      <stop offset=".58" stop-color="#a56e38" />
+      <stop offset=".88" stop-color="#78463c" />
+      <stop offset="1" stop-color="#3b4143" />
+    </radialGradient>
+    <pattern id="mesh" width="5" height="5" patternUnits="userSpaceOnUse">
+      <path d="m0 0 5 5m-5 0 5-5" stroke="#77848a" stroke-width=".8" />
+    </pattern>
+    <linearGradient id="maple-red" x1="0" x2=".98" y1=".22" y2=".55">
+      <stop stop-color="#592d32" />
+      <stop offset=".3" stop-color="#98523e" />
+      <stop offset=".65" stop-color="#7f3834" />
+      <stop offset="1" stop-color="#4e3030" />
+    </linearGradient>
+    <linearGradient id="silver-shell" x1="0" x2="1" y1="0" y2=".1">
+      <stop stop-color="#586e7b" />
+      <stop offset=".28" stop-color="#91aab3" />
+      <stop offset=".46" stop-color="#d5e0e0" />
+      <stop offset=".63" stop-color="#829aa6" />
+      <stop offset="1" stop-color="#586977" />
+    </linearGradient>
+    <linearGradient id="mic-steel" x1="0" x2="1" y1="0" y2=".35">
+      <stop stop-color="#899da5" />
+      <stop offset=".38" stop-color="#e0e3d8" />
+      <stop offset=".72" stop-color="#b9c2be" />
+      <stop offset="1" stop-color="#829097" />
+    </linearGradient>
+    <clipPath id="pearl-guard">
+      <path d="M379 257 Q373 256 376 270 L398 341 Q400 350 414 350 L442 356 Q454 360 456 338 L468 301 Q468 291 460 295 Q446 305 431 295 L409 283Z" />
+    </clipPath>
+  </defs>
+  <style>
+.instrument { opacity:.52; filter:saturate(.48); }
+.instrument:target { opacity:1; filter:saturate(1.21) contrast(1.08) brightness(1.04); }
+</style>
+  <g transform="translate(69 0) scale(.835 1)" stroke="#7897a2" opacity=".2" stroke-width="1">
+    <path d="M1 154q185-3 435 0m-433 4q200-2 430 .2m-429 4q224-1 431 .5m-429 3.5q172 .3 425 0m-423 4q208 0 420 .8" />
+  </g>
+  <g id="bass" class="instrument">
+    <g transform="translate(153 3) rotate(7 21 64) scale(.30)">
+      <g transform="translate(-356)">
+        <path d="M413 274 C398 282 385 249 379 249 C357 248 376 283 381 305 C391 341 360 355 360 384 C359 414 377 428 423 433 C461 439 485 429 486 408 C488 387 464 362 462 342 C459 323 481 300 471 292 Q466 285 458 291 C449 297 439 296 432 290Z" fill="url(#burst)" stroke-width="3.2" />
+        <g>
+          <path d="M368 384q-2 22 12 32m4 5 11 6" stroke="#d3a168" fill="none" stroke-width="2.8" opacity=".78" />
+        </g>
+        <path d="M379 257 Q373 256 376 270 L398 341 Q400 350 414 350 L442 356 Q454 360 456 338 L468 301 Q468 291 460 295 Q446 305 431 295 L409 283Z" fill="#556574" stroke-width="1.6" />
+        <g clip-path="url(#pearl-guard)">
+          <path d="m378 265 7 3-1 4 6 1m4-8 3 4 4-2m-14 13 5 2-1 4 5 2m-10 1 4 3m13-9 3 3 5-1m-10 12 3-3 6 2m-16 1 2 3 4 1m18 6 6-2 4 1m4 10 3-3 4 1m-22 2 3 5 4-1m18-8 6-5 4 1m-6-8 4-2 2 1 4-4m-3 20 6-3m-27 12 4-1 3 3m9-2 4-3m-40-1 4 1m14 10 4-1" stroke="#b3c1c4" stroke-width="2.4" opacity=".78" />
+          <path d="m381 271 4 2m5-5 2 1m5 18 3-1m3 8 5 1m0 12 2 2m33 5 3-2m5 5 4-4m-15 13 5-2m-36 2 4 3" stroke="#354754" stroke-width="3" opacity=".85" />
+        </g>
+        <path d="M417 76 416 70 405 67 405 61 416 17 Q417 0 428 1 Q441 1 438 18 Q430 28 436 42 L439 55 429 70 428 77Z" fill="#d6b98c" stroke-width="2.5" />
+        <ellipse cx="412" cy="12" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="408" cy="28" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="404" cy="44" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="400" cy="61" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <path d="M415 76h15l3 229h-23Z" fill="#dac091" stroke-width="1.9" />
+        <path d="M414 95.9h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 114.6h17" stroke="#877d68" stroke-width="1.05" />
+        <rect x="417" y="110.61512519465606" width="10" height="3" fill="#464847" stroke="none" />
+        <path d="M414 132.3h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 149.0h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 164.8h17" stroke="#877d68" stroke-width="1.05" />
+        <rect x="417" y="160.8007195378296" width="10" height="3" fill="#464847" stroke="none" />
+        <path d="M414 179.7h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 193.7h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 207.0h17" stroke="#877d68" stroke-width="1.05" />
+        <rect x="417" y="203.01846670959435" width="10" height="3" fill="#464847" stroke="none" />
+        <path d="M414 219.5h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 231.4h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 242.5h17" stroke="#877d68" stroke-width="1.05" />
+        <rect x="417" y="238.53340281000726" width="10" height="3" fill="#464847" stroke="none" />
+        <path d="M414 253.1h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 263.0h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 272.4h17" stroke="#877d68" stroke-width="1.05" />
+        <rect x="417" y="268.40971717336527" width="10" height="3" fill="#464847" stroke="none" />
+        <path d="M414 281.3h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M414 289.6h17" stroke="#877d68" stroke-width="1.05" />
+        <rect x="406" y="333" width="33" height="14" rx="1.6" fill="#303c40" stroke-width="2.5" />
+        <rect x="406" y="368" width="33" height="14" rx="1.6" fill="#303c40" stroke-width="2.5" />
+        <path d="M405 404h35m-35 5h35" stroke="#696f6a" stroke-width="5" />
+        <g>
+          <path d="M418 74 410 60m11 14-7-29m10 29-7-44m10 44-6-60" stroke="#8e8064" stroke-width="1.3" />
+          <path d="M407 336h30m-30 35h30" stroke="#67706c" stroke-width="2" stroke-dasharray="2.1 4" />
+          <path d="M405 397h35l-1 15-34-1Z" fill="#a4adaa" stroke="#58676a" stroke-width="1.8" />
+          <path d="M410 399v9m8-9v10m7-10v10m8-10v10" stroke="#eef0df" stroke-width="2.5" />
+        </g>
+        <path d="M417 63 L413 406" stroke="#d6cbb5" stroke-width="1.1" />
+        <path d="M420.3 63 L419 406" stroke="#d6cbb5" stroke-width="1.1" />
+        <path d="M423.6 63 L425 406" stroke="#d6cbb5" stroke-width="1.1" />
+        <path d="M426.9 63 L431 406" stroke="#d6cbb5" stroke-width="1.1" />
+        <circle cx="455" cy="370" r="4.4" fill="#454c4a" stroke-width="1.6" />
+        <circle cx="462" cy="389" r="4.4" fill="#454c4a" stroke-width="1.6" />
+        <circle cx="470" cy="405" r="4.4" fill="#454c4a" stroke-width="1.6" />
+        <circle cx="452" cy="412" r="4.4" fill="#454c4a" stroke-width="1.6" />
+        <g fill="none" stroke="#a7b8bc" stroke-width="2.2">
+          <path d="m381 263 5 6-2 4 6 4 2 8m-5-18 4 3 5-1 4 5m-12 4 5 2 2 8 4 3m-7-17 2 5 4 1m38 45 7-5 6 2 7-8m-14 13 3-5 4 1m-44 18 8 3 5-3 6 2m18-24 4-2 4 1 4-5" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <g id="snare" class="instrument">
+    <g transform="translate(255 3) scale(.74)" stroke-linecap="round" stroke-linejoin="round">
+      <g fill="none" stroke="#687c85" stroke-width="1.65">
+        <path d="m36 30 3 61 1 11-14 19m14-19 15 13m-15-13 2 18M129 33l-4 64-2 8-12 14m12-14 15 10m-15-10 3 15" />
+        <path d="m19 66 1 39-13 16m13-16 13 9m-13-9 1 17m124-56-3 38-11 13m11-13 14 10" />
+        <path d="m48 83-2 23-12 12m12-12 9 8M101 90l-5 25m29-22 5 23m-17-18 1 20M68 74l4-11 20-6" />
+      </g>
+      <g stroke="#4d626b" stroke-width="1.7">
+        <path d="M102 72q12 5 27 2l-2 26q-13 5-25-1Z" fill="url(#silver-shell)" />
+        <ellipse cx="115.5" cy="73" rx="14" ry="4.7" transform="rotate(5 115.5 73)" fill="#cbd6d6" />
+        <path d="m58 53 3 22q12 4 23-2l-2-22Z" fill="url(#silver-shell)" />
+        <ellipse cx="70" cy="52" rx="12" ry="4.5" transform="rotate(-8 70 52)" fill="#e3e5dd" />
+        <path d="m85 48 2 22q12 5 25-3l-3-22Z" fill="url(#silver-shell)" />
+        <ellipse cx="97" cy="46" rx="13" ry="4.9" transform="rotate(-12 97 46)" fill="#dbe2dd" />
+        <path d="M56 83q8-17 26-17c16 0 26 15 26 31 1 13-5 21-16 26l-10 5Z" fill="url(#silver-shell)" />
+        <path d="m88 72 9 2m-5 9 11 1m-8 26 10-3" fill="none" stroke="#ced8d5" stroke-width="2.2" />
+        <g transform="rotate(-14 74 104)">
+          <ellipse cx="74" cy="104" rx="23.5" ry="27.3" fill="#697982" stroke="#394f5d" stroke-width="2" />
+          <ellipse cx="74" cy="104" rx="20.5" ry="24.1" fill="#ecebe0" stroke="#bbc8c6" stroke-width="1.4" />
+          <path d="m73 78 .1 3.1m16 3.8-1.7 2.5m9.1 16.5-2.8.3m-2.8 15.4-2.2-1.6m-14.6 11.9-.2-3m-17.5-5.8 2.2-1.7m-7.7-16.5 2.7.2m4.8-15.6 1.8 2" stroke="#d2d8d0" stroke-width="1.6" />
+          <circle cx="79" cy="117" r="4.4" fill="#435660" stroke="#bac3ba" stroke-width="1.2" />
+        </g>
+        <path d="m55 120-7 9m48-12 8 7M30 81l26-3 2.4 12q-11 6-25.4 4.5Z" fill="url(#silver-shell)" />
+        <ellipse cx="43" cy="80" rx="14" ry="3.9" transform="rotate(-8 43 80)" fill="#e2e5dc" />
+        <path d="m33 90 21-3m8-15q9 1 18-2m9-2q11 1 19-4m-3 32q10 3 19 0" fill="none" stroke="#d4dedb" stroke-width="1.35" />
+        <path d="m64 57 1.4 10m12-14 1.6 11m12-13 1.1 11m12-15 1.5 12m1.3 20-1 12m17-10-1 12m-85-8 .5 5m10-7 1 6" fill="none" stroke-width="1.5" />
+      </g>
+      <g fill="#b99a63" stroke="#645d53" stroke-width="1.5">
+        <path d="M6 39.6c8-2.8 20-6.6 25.5-10.3 1.4-2.3 3.2-4.4 5.2-4.7 2-.4 3.3.8 4.3 1.7 8-1.4 19.6-3.1 27.1-3.6-7.7 4.7-20 9.1-31.8 12.7-13 4.1-24.6 6.6-30.3 4.2Z" />
+        <path d="M106 36.6q12-1.2 20-4.1c1-1.4 2.7-3.1 4.3-3 1.6 0 2.6 1 3.4 2.1q12.1 3.2 20.6 7.4c-13.2 1.1-34.7.2-48.3-2.4Z" />
+        <path d="M5 70.5q8.1-2.1 12.6-5.4l2.8-2 3.3 1.6q6.3.3 11.2 1.9c-8.8 3.3-22.5 5.2-29.9 3.9Z" />
+        <path d="M130 68.6q9-1.3 13.1-4.4 2.2-2.8 4.1.1c5.6 1.8 9.8 3.3 14 5.2-10.2.5-22.7.2-31.2-.9Z" />
+      </g>
+      <g fill="none" stroke-linecap="round">
+        <path d="M15 38q19-4 40-11m60 9q12-.6 15.8-2.6" stroke="#e2c995" stroke-width="1.65" />
+        <path d="m36 27-.7-4m95 8 .3-3.7m-111 36 .4-2.5m126.2 3v-2.5M6 73.7q14.2.3 28-4.6" stroke="#5e6261" stroke-width="1.6" />
+      </g>
+    </g>
+  </g>
+  <g id="ultratone" class="instrument">
+    <g transform="translate(87 19) rotate(-7 28 82) scale(.355)">
+      <g transform="translate(-0)">
+        <path d="M60 313 C48 321 33 316 35 278 Q38 253 26 261 C4 272 17 308 24 331 C37 355 1 376 1 408 Q4 459 85 474 C119 482 150 472 149 443 C149 404 112 384 121 357 C126 338 140 311 115 300 Q115 327 91 315 L81 293Z" transform="translate(0 -40)" fill="#a4c7b7" stroke-width="3.2" />
+        <g>
+          <path d="M13 354q-8 18-6 34 3 14 14 25M22 264q-5 9-3 23" fill="none" stroke="#d0dcce" stroke-width="4" />
+          <path d="M109 386q13 2 25-3" fill="none" stroke="#cabfa6" stroke-width="1.8" />
+        </g>
+        <path d="M55 263 Q39 273 33 263 C30 283 44 299 41 321 Q35 347 56 351 C94 357 115 347 113 371 Q108 392 105 406 Q133 416 142 399 C145 371 110 343 114 320 Q115 303 119 292 L114 282 Q102 298 83 280Z" fill="#eeead7" stroke-width="1.6" />
+        <path d="M64 66 62 55 52 49 55 5 70 6 82 2 90 1 87 49 80 58 79 66Z" fill="#d6b98c" stroke-width="2.5" />
+        <ellipse cx="50" cy="18" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="50" cy="31" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="50" cy="45" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="94" cy="18" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="94" cy="31" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="94" cy="45" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <path d="M64 67h15l3 225h-23Z" fill="#604c43" stroke-width="1.9" />
+        <path d="M63 85.4h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 102.8h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <circle cx="71" cy="98.8011147426864" r="1.8" fill="#e6dbbd" stroke="none" />
+        <path d="M63 119.2h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 134.7h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 149.3h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <circle cx="71" cy="145.3295207093337" r="1.8" fill="#e6dbbd" stroke="none" />
+        <path d="M63 163.1h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 176.2h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 188.5h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <circle cx="71" cy="184.47072258437623" r="1.8" fill="#e6dbbd" stroke="none" />
+        <path d="M63 200.1h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 211.0h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 221.4h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <circle cx="71" cy="217.3975691503435" r="1.8" fill="#e6dbbd" stroke="none" />
+        <path d="M63 231.2h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 240.4h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 249.1h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <circle cx="71" cy="245.09669878463436" r="1.8" fill="#e6dbbd" stroke="none" />
+        <path d="M63 257.3h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 265.1h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <path d="M63 272.4h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <circle cx="71" cy="268.39810364161394" r="1.8" fill="#e6dbbd" stroke="none" />
+        <path d="M63 279.3h17" stroke="#c4b7a2" stroke-width="1.05" />
+        <rect x="55" y="293" width="33" height="14" rx="1.6" fill="#d7d3bd" stroke-width="2.5" />
+        <rect x="55" y="333" width="33" height="14" rx="1.6" fill="#d7d3bd" stroke-width="2.5" />
+        <path d="M54 360h35m-35 18h35" stroke="#696f6a" stroke-width="5" />
+        <g>
+          <path d="M66 64 58 44m10 20-8-34m10 34-9-48m12 48 10-47m-8 47 9-33m-7 33 7-18" stroke="#837864" stroke-width="1.2" />
+          <path d="M53 361h36m-34 18h31" stroke="#c7c9b9" stroke-width="2.5" />
+          <path d="M55 297h31m-31 40h31" stroke="#837c71" stroke-width="1.8" stroke-dasharray="2 3" />
+        </g>
+        <path d="M66 54 L62 362" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M68 54 L65.6 362" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M70 54 L69.2 362" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M72 54 L72.8 362" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M74 54 L76.4 362" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M76 54 L80 362" stroke="#a49b8a" stroke-width="0.7" />
+        <circle cx="114" cy="357" r="4.4" fill="#454c4a" stroke-width="1.6" />
+        <circle cx="126" cy="378" r="4.4" fill="#454c4a" stroke-width="1.6" />
+        <circle cx="120" cy="399" r="4.4" fill="#454c4a" stroke-width="1.6" />
+        <g stroke="#748c82" stroke-width="2">
+          <path d="M35 265q-4 13 3 33m69 96q19 6 30-9m-101-69q-1 13 3 20" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <g id="mic" class="instrument">
+    <g transform="translate(187 -3) scale(1.02)">
+      <g transform="translate(55 91) rotate(45) scale(.75)">
+        <path d="M0 24 22 24 18 91q-6 4-12 0Z" fill="#4e5f68" stroke-width="2.6" />
+        <path d="m4 31 1 19m1 4 3 27" stroke="#b6c1be" stroke-width="2" />
+        <path d="M-4 13C-4-6 26-8 27 12q1 14-12 18Q0 32-4 13Z" fill="url(#mic-steel)" stroke-width="2.5" />
+        <path d="M-4 13C-4-6 26-8 27 12q1 14-12 18Q0 32-4 13Z" fill="url(#mesh)" />
+        <path d="M-3.2 13.9q14.4 3.4 29.6-2.2l-.4 3.4Q10 20.4-2.8 17Z" stroke-width="1.25" fill="#87999e" />
+        <path d="M7 92h11v9H8Z" fill="#8b9291" />
+        <path d="M13 101c0 9 7 13 16 10 10-3 15-1 18 6" stroke-width="2.6" />
+        <path d="M1.7 26.6q9.7 3.1 18.8-.9l-.35 4q-9.2 3.6-18.2.8Z" fill="#3a4e59" stroke-width="1.2" />
+        <path d="m8 94.5 8.8-.45m-8.4 3.2 8.15-.45" stroke="#bfc9c8" stroke-width="1" />
+      </g>
+    </g>
+  </g>
+  <g id="potbelly" class="instrument">
+    <g transform="translate(363 18) rotate(8 27 79) scale(.36)">
+      <g transform="translate(-180)">
+        <path d="M247 253 C231 265 223 234 219 226 Q207 221 206 247 C204 262 221 279 215 302 C210 325 182 342 181 372 C177 409 198 432 240 434 C298 442 336 425 337 385 C338 350 309 330 304 310 C300 294 313 281 312 268 Q309 261 304 267 C291 282 281 280 272 272 L267 258Z" fill="url(#maple-red)" stroke-width="3.2" />
+        <g>
+          <path d="M208 330q14 2 23 0m-36 11q17 1 28-1m-31 9q17-1 29-3m58-34q15 2 23-.5m-16 8q13 0 19-3M186 377q24-4 43-3m-33 13q16-3 30-3m55-24q18 2 35-3m-30 27q20 0 35-5m-117 34q15-1 24-3m38-4q26-.6 48-6" fill="none" stroke="#bd7865" stroke-width="1.7" opacity=".42" />
+          <path d="M216 232q-7 14-3 28M186 378q-1 27 20 40" fill="none" stroke="#d9a073" stroke-width="2.8" />
+        </g>
+        <path d="m191 353 10-14-5 15-7 10m20-110 2-11 4-8" stroke="#d3af7d" stroke-width="5" />
+        <path d="M249 67 247 53 238 45 245 7 258 1 272 6 278 46 271 55 269 67Z" fill="#35383a" stroke-width="2.5" />
+        <ellipse cx="240" cy="20" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="238" cy="34" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="236" cy="48" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="276" cy="20" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="278" cy="34" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <ellipse cx="280" cy="48" rx="4" ry="3" fill="#c5ceca" stroke-width="1.25" />
+        <path d="M252 67h15l3 211h-23Z" fill="#dac091" stroke-width="1.9" />
+        <path d="M251 84.3h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 100.6h17" stroke="#877d68" stroke-width="1.05" />
+        <circle cx="259" cy="96.57348982536368" r="1.8" fill="#665c4c" stroke="none" />
+        <path d="M251 116.0h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 130.5h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 144.2h17" stroke="#877d68" stroke-width="1.05" />
+        <circle cx="259" cy="140.2067949763085" r="1.8" fill="#665c4c" stroke="none" />
+        <path d="M251 157.2h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 169.4h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 180.9h17" stroke="#877d68" stroke-width="1.05" />
+        <circle cx="259" cy="176.91254429023724" r="1.8" fill="#665c4c" stroke="none" />
+        <path d="M251 191.8h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 202.1h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 211.8h17" stroke="#877d68" stroke-width="1.05" />
+        <circle cx="259" cy="207.7906092920999" r="1.8" fill="#665c4c" stroke="none" />
+        <path d="M251 221.0h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 229.6h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 237.8h17" stroke="#877d68" stroke-width="1.05" />
+        <circle cx="259" cy="233.76623752692376" r="1.8" fill="#665c4c" stroke="none" />
+        <path d="M251 245.5h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 252.7h17" stroke="#877d68" stroke-width="1.05" />
+        <path d="M251 259.6h17" stroke="#877d68" stroke-width="1.05" />
+        <circle cx="259" cy="255.61777719280235" r="1.8" fill="#665c4c" stroke="none" />
+        <path d="M251 266.1h17" stroke="#877d68" stroke-width="1.05" />
+        <rect x="242" y="283" width="33" height="14" rx="1.6" fill="#d7d3bd" stroke-width="2.5" />
+        <rect x="242" y="330" width="33" height="14" rx="1.6" fill="#d7d3bd" stroke-width="2.5" />
+        <path d="M241 359h35m-35 18h35" stroke="#696f6a" stroke-width="5" />
+        <g>
+          <path d="M254 62 246 45m10 17-8-31m10 31-9-44m12 44 7-44m-5 44 8-30m-6 30 8-16" stroke="#aaa38a" stroke-width="1.4" />
+          <path d="M244 286h29m-29 47h29m-29 26h28m-28 18h28" stroke="#f1e0b4" stroke-width="2" />
+          <path d="M244 293h29m-29 47h29" stroke="#8a7458" stroke-width="1.7" stroke-dasharray="2 3" />
+        </g>
+        <path d="M254 54 L250 361" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M256 54 L253.6 361" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M258 54 L257.2 361" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M260 54 L260.8 361" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M262 54 L264.4 361" stroke="#a49b8a" stroke-width="0.7" />
+        <path d="M264 54 L268 361" stroke="#a49b8a" stroke-width="0.7" />
+        <circle cx="290" cy="348" r="4.4" fill="#bb8550" stroke-width="1.6" />
+        <circle cx="310" cy="372" r="4.4" fill="#bb8550" stroke-width="1.6" />
+        <g stroke="#d3ac81" stroke-width="2.7">
+          <path d="m196 349 7-7-2 8m-13 10 6-6m14-105 1-10m8 26 1 6" />
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

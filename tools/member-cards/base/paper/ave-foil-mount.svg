@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 258 338" preserveAspectRatio="none">
+  <defs>
+    <linearGradient id="cloth" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#453145"/><stop offset=".36" stop-color="#683748"/><stop offset=".72" stop-color="#81444f"/><stop offset="1" stop-color="#392b38"/>
+    </linearGradient>
+    <linearGradient id="foil" x1="0" y1="0" x2=".78" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#cfb995"/><stop offset=".31" stop-color="#b5966f"/><stop offset=".68" stop-color="#cfb28c"/><stop offset="1" stop-color="#9b775b"/>
+    </linearGradient>
+    <g id="shoulder" fill="none" stroke="url(#foil)" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3.2 29V14.9C8.4 14.9 11.7 12.9 12.0 7.9C14.8 8.2 16.4 6.7 16.7 3.0H37" stroke-width=".85"/>
+      <path d="M3.2 10.5C6.9 10.3 9.3 7.6 9.8 3.1M5.8 4.3C4.3 4.4 3.6 5.0 3.2 6.3" stroke-width=".8"/>
+    </g>
+  </defs>
+  <rect width="258" height="338" fill="url(#cloth)"/>
+  <path d="M3.2 30V307M38 3H220M255 31V307M38 335H220" fill="none" stroke="url(#foil)" stroke-width=".85"/>
+  <path d="M5.7 36V302M44 5.5H214M252.4 36V302M44 332.3H214" fill="none" stroke="#bd9a77" stroke-width=".46" opacity=".76"/>
+  <use href="#shoulder"/><use href="#shoulder" transform="translate(258) scale(-1 1)"/>
+  <use href="#shoulder" transform="translate(0 338) scale(1 -1)"/><use href="#shoulder" transform="translate(258 338) scale(-1)"/>
+</svg>

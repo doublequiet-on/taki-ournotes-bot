@@ -1,0 +1,89 @@
+/* The jacket and printed borders surround the normal, content-sized grid. */
+.ave-stage {
+  display: inline-block;
+  position: relative;
+  isolation: isolate;
+  padding: 38px 23px 30px;
+  vertical-align: top;
+  background: #391324 url("velvet.jpg") center / 100% 100% no-repeat;
+}
+.ave-book {
+  position: relative;
+  isolation: isolate;
+  padding: 25px 12px 23px;
+  background: radial-gradient(ellipse at 4% 0%, #fffdf5 0%, transparent 53%),
+    linear-gradient(116deg, #f7f4e9 0%, #f6f3ea 47%, #ebe8df 100%);
+  border: 1px solid #ded7c5;
+  box-shadow: 0 1px #bfb6a1, 1px 3px #e9e4d5, 1px 4px #9e8b78,
+    2px 6px #47252f, 3px 7px #9e785a, 6px 10px 10px #160711aa, 12px 18px 20px #16081080;
+}
+.ave-print {
+  position: absolute; z-index: -1; inset: 0; overflow: hidden;
+  isolation: isolate; pointer-events: none;
+}
+.ave-print::after {
+  content: ""; position: absolute; inset: 0; opacity: .055; mix-blend-mode: multiply;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='145' height='145'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.68' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Cpath fill='%23888888' filter='url(%23n)' d='M0 0h145v145H0z'/%3E%3C/svg%3E");
+}
+.ave-border { position: absolute; inset: 9px; border: .65px solid #a68e656e; }
+.ave-corner { position: absolute; width: 72px; height: 39px; background: url("corner.svg") center / contain no-repeat; opacity: .85; }
+.ave-corner.nw { top: 7px; left: 7px; }
+.ave-corner.ne { top: 7px; right: 7px; transform: scaleX(-1); }
+.ave-corner.sw { bottom: 7px; left: 7px; transform: scaleY(-1); }
+.ave-corner.se { bottom: 7px; right: 7px; transform: scale(-1); }
+.ave-mark { position: absolute; width: 78px; height: 19px; top: 0; transform: translateX(-50%);
+  background: url("fleuron.svg") center / contain no-repeat, #f9f6ec; }
+.ave-fold { position: absolute; inset-block: 0; width: 60px; margin-left: -34px;
+  background: linear-gradient(90deg,transparent,#493e3510 40%,#4a403526 55%,#493d3442 56%,#fffdf3c2 58%,#dfd8c518 66%,transparent); }
+.ave-fold.ridge { background: linear-gradient(90deg,transparent,#fffdf581 50%,#fffdf5e3 55%,#514a3c2b 58%,#98887615 73%,transparent); }
+.ave-book > main[data-band-id="2"], .ave-book > main[data-band-id="2"] > section {
+  background: transparent; box-shadow: none; }
+.ave-book main[data-band-id="2"] :is(.corner-print,.printed-edge,.plate-illustration,.return-print) { visibility: hidden; }
+.ave-blank main > section { visibility: hidden; }
+main[data-band-id="2"] .traits { flex-wrap: wrap; column-gap: 10px; row-gap: 2px; }
+main[data-band-id="2"] .traits > span + span::before { content: none; }
+main[data-band-id="2"] .traits .debut { flex-basis: 100%; }
+main[data-band-id="2"] .stats { font-variant-numeric: tabular-nums; }
+main[data-band-id="2"] .stats thead th { padding-bottom: 6px; border-bottom: 1px solid #b6a38f; }
+main[data-band-id="2"] .stats tbody :is(th,td) { font-size: 14px; padding-block: 7px; }
+main[data-band-id="2"] .stats tbody td:last-child { color: #643148; font-weight: 590; }
+main[data-band-id="2"] .stats tfoot :is(th,td) { font-size: 13px; padding-block: 7px 5px; }
+main[data-band-id="2"] .stats tfoot .total { font-size: 17px; font-weight: 610; color: #64233b; }
+main[data-band-id="2"] .stats tfoot td { letter-spacing: -.04em; }
+.ave-growth { border-top: 1px solid #b6a38f80; padding-top: 5px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px; color: var(--secondary); font-size: 11.5px; }
+.ave-growth > span { white-space: nowrap; }
+.ave-source .condition { white-space: pre-line; font-size: 14.5px; line-height: 1.45; }
+.ave-source em { font-style: normal; font-weight: 540; color: var(--display); }
+.ave-source .sequence { margin-block: 5px 3px; gap: 0; background: #9f775a0c; border-block: 1px solid #a593812d; }
+.ave-source .level { padding-block: 3px; text-align: center; font-size: 13px; }
+.ave-source .level + .level { border-left: 1px solid #a5938133; }
+.ave-source .level:last-child { font-weight: 570; }
+main[data-band-id="2"] .event-targets, main[data-band-id="2"] .target-group { display:flex; align-items:center; flex-wrap:wrap; gap:3px; }
+main[data-band-id="2"] .event-targets { column-gap: 9px; margin: 5px 0; }
+main[data-band-id="2"] .target-group span { color: var(--secondary); font-size: 12px; }
+main[data-band-id="2"] .target-group img { width: 18px; height: 18px; object-fit:contain; }
+main[data-band-id="2"] .clipping { display:block; }
+
+/* The two slotted paper corners sit on the mount outside the game frame. */
+main[data-band-id="2"] .art-page figure::before,
+main[data-band-id="2"] .art-page figure::after {
+  content: ""; position: absolute; z-index: 2; inset: auto;
+  width: 32px; height: 32px; pointer-events: none;
+  clip-path: polygon(0 68%,68% 0,100% 0,0 100%);
+  background: linear-gradient(135deg,#74394b 38%,#4a2032 43%,#925e60 52%,#c8ab85 54%,#502835 57%);
+  box-shadow: none;
+}
+main[data-band-id="2"] .art-page figure::before { top: 7px; left: 5px; }
+main[data-band-id="2"] .art-page figure::after { bottom: 5px; right: 4px; transform: rotate(180deg); }
+main[data-band-id="2"] .portrait-frame { box-shadow: 0 1px 3px #31212b44; }
+main[data-band-id="2"] .numbers { margin-top: 24px; }
+main[data-band-id="2"] .stats thead th { padding-block: 5px 6px; }
+main[data-band-id="2"] .stats :is(td,th):last-child {
+  padding-inline: 4px 6px; background: #822e4610; color: #642c42;
+}
+main[data-band-id="2"] .stats thead th:last-child {
+  box-shadow: inset 0 1.5px #98556a; font-weight: 600;
+}
+main[data-band-id="2"] .stats tfoot .total { background: #822e461c; }
+main[data-band-id="2"] .stats tbody :is(th,td) { padding-block: 9px; }
+main[data-band-id="2"] .ave-growth { padding-top: 7px; }

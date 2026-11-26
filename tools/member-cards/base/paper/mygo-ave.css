@@ -1,0 +1,147 @@
+/* The blue enters from the two outside corners of a single open sheet. */
+main[data-band-id="1"] {
+  --paper:#f7f9f4; --leaf:#d5e5e6; --text:#203b49; --secondary:#405a68;
+  --heading:#204e62; --display:#17405a; --value:#284a5c; --seam:#4a657023;
+  --accent:#367da1;
+}
+main[data-band-id="1"] .art-page {
+  background:
+    url("mygo-ink-wash.svg") left top / 100% auto no-repeat,
+    linear-gradient(148deg,#b1ccd5 -4%,#dde9e7 37%,#eff4ef 65%,#d6e6e9 100%);
+}
+/* Window light across the crease and the photograph mounted next to it. */
+main[data-band-id="1"] .art-page::before {
+  content:""; position:absolute; inset:0 0 0 auto; width:24px; z-index:-1; pointer-events:none;
+  background:linear-gradient(90deg,transparent,#405b6610 65%,#344e5b32 100%);
+}
+main[data-band-id="1"] .portrait-frame {
+  filter:drop-shadow(.6px 1px .5px #2e435854) drop-shadow(1.7px 2.8px 2px #36495342);
+}
+main[data-band-id="1"] .numbers {
+  anchor-name:--mygo-stats;
+  margin:0 -12px 7px -15px; padding:8px 12px 0 15px;
+}
+main[data-band-id="1"] .art-page::after {
+  content:""; position:absolute; z-index:-2; inset:anchor(--mygo-stats top) 0 0;
+  pointer-events:none;
+  background:
+    url("mygo-notebook-rule.svg") 4px 24px / calc(100% - 8px) calc(100% - 26px) no-repeat,
+    linear-gradient(105deg,#dbe5e5,#eff1e9 39%,#ebefeb 85%,#dce6e7);
+  mask-image:linear-gradient(to bottom,transparent,black 6px);
+}
+main[data-band-id="1"] .numbers::after {
+  content:""; position:absolute; z-index:-1; pointer-events:none;
+  inset:anchor(--mygo-stats bottom) 7px 5px;
+  background:url("mygo-notebook-rule.svg#lines") center -17px / 100% 88px repeat-y;
+}
+.ruled .rail td { anchor-scope:--notebook-axis; }
+.ruled .rail svg { anchor-name:--notebook-axis; }
+.ruled .rail td::before {
+  content:""; position:absolute; z-index:-1; pointer-events:none;
+  top:calc(anchor(--notebook-axis bottom) - 25.6px); left:7px; right:7px; height:1px;
+  background:url("mygo-notebook-rule.svg#lines") bottom / 100% 88px no-repeat;
+  opacity:.52;
+}
+.ruled .rail td::after {
+  content:""; position:absolute; z-index:-1; pointer-events:none;
+  top:calc(anchor(--notebook-axis bottom) - 3.3px); left:7px; right:7px;
+  height:.65px; background:#75969270;
+}
+@font-face {
+  font-family:"MyGO Notebook"; src:url("mygo-stat-regular.ttf") format("truetype");
+  font-weight:100 499;
+}
+@font-face {
+  font-family:"MyGO Notebook"; src:url("mygo-stat-medium.ttf") format("truetype");
+  font-weight:500 900;
+}
+main[data-band-id="1"] .stats {
+  font-family:"MyGO Notebook","Noto Sans SC Variable",sans-serif;
+}
+main[data-band-id="1"] .stats thead th { font-size:13px; line-height:1.3; }
+main[data-band-id="1"] .stats :is(.reading,tfoot tr) td:nth-child(2) { font-size:17.5px; }
+main[data-band-id="1"] .stats .reading td:last-child {
+  font-size:calc(18px + 3px * var(--stat-type-room,0));
+}
+main[data-band-id="1"] .stats .axis-levels {
+  font-size:13px; font-weight:500; line-height:15px; height:15px;
+}
+main[data-band-id="1"] .lyric-page {
+  background:
+    linear-gradient(90deg,#3b515d42 0,#6479832b 2px,#8093981d 8px,#8192980a 20px,transparent 33px),
+    var(--fold-ridge,none),
+    linear-gradient(127deg,#fbfbf4 3%,#f6f8f2 48%,#e4edef 100%);
+}
+main[data-band-id="1"] .lyric-page:has(+ .relation-page) {
+  --fold-ridge:linear-gradient(90deg,transparent 89%,#fffdf568 calc(100% - 2px),#fffdf5ad);
+}
+main[data-band-id="1"] .skills .level {
+  font-family:"MyGO Notebook","Roboto Variable","Noto Sans SC Variable",sans-serif;
+  text-align:right;
+}
+main[data-band-id="1"] .skills .level { color:#526d79; }
+main[data-band-id="1"] .skills .sequence > .level:last-child,
+main[data-band-id="1"] .score-pair tbody td:last-child .level { color:var(--display); }
+main[data-band-id="1"] .skills .effect:has(.sequence) .sequence {
+  box-shadow:0 1px #70959c40;
+}
+main[data-band-id="1"] .skills:has(.score-pair) .effect .sequence {
+  padding-left:82px; gap:0;
+}
+main[data-band-id="1"] .skills:has(.ladder) .effect .sequence {
+  padding-left:58px; gap:0;
+}
+main[data-band-id="1"] .relation-page {
+  background:
+    linear-gradient(90deg,#61757c45 0,#7d8f912a 3px,#85979518 12px,transparent 29px),
+    linear-gradient(111deg,#e9eee8 0%,#f5f5eb 38%,#f6f6ed 71%,#e3ece9 100%);
+}
+main[data-band-id="1"] > section:last-child::after {
+  content:""; position:absolute; z-index:-1; right:0; bottom:0;
+  width:min(72%,174px); aspect-ratio:300/206; pointer-events:none;
+  background:url("mygo-ink-wash.svg") center/100% 100% no-repeat;
+  transform:rotate(180deg); opacity:.64;
+}
+main[data-band-id="1"] .printed-edge { opacity:.12; }
+
+/* The small aperture on ELEMENTS keeps the colour within its mount. The
+   portrait already supplies our aperture; the foil is applied to the mat. */
+main[data-band-id="2"] {
+  --paper:#f6f0e7; --leaf:#e9e1d5; --text:#392f35; --secondary:#64545d;
+  --heading:#563846; --display:#632b42; --value:#573a47; --seam:#61495524;
+  --accent:#79384e;
+}
+main[data-band-id="2"] .art-page {
+  color:var(--text);
+  background:radial-gradient(ellipse at 0 0,#dacccd 0%,transparent 56%),
+    linear-gradient(133deg,#e9dfd4,#f5f0e5 56%,#e9ded2);
+}
+main[data-band-id="2"] .art-page figure::before {
+  content:""; position:absolute; z-index:-1; inset:6px 3px 3px 5px;
+  background:url("ave-foil-mount.svg") center/100% 100% no-repeat;
+  box-shadow:0 .75px 0 #5138445c, 0 1.6px 2.7px #48302829;
+}
+main[data-band-id="2"] .lyric-page {
+  background:linear-gradient(90deg,var(--seam),transparent 7px),
+    linear-gradient(120deg,#f1eae1,#faf5e9 51%,#eee5d9);
+}
+main[data-band-id="2"] .relation-page {
+  background:linear-gradient(90deg,var(--seam),transparent 6px),
+    linear-gradient(140deg,#f7f0e5,#f7f1e5 56%,#ede1d4);
+}
+main[data-band-id="2"] > section:last-child {
+  box-shadow:inset -3px 0 #67404d,inset -4px 0 #bfaa88;
+}
+main[data-band-id="2"] .printed-edge { opacity:.09; filter:grayscale(.88) sepia(.21); }
+main[data-band-id="2"] .stats :is(th,td) { color:var(--text); }
+main[data-band-id="2"] .stats :is(thead th,tbody td:nth-child(2),tfoot td:nth-child(2)) { color:var(--secondary); }
+main[data-band-id="2"] .stats tfoot :is(th,td) { border-top-color:#c5b4b3; }
+main[data-band-id="2"] .stats .total { color:var(--value); }
+
+/* Gold ink catches in the game's small lozenges at the back of the mount. */
+main[data-band-id="2"] .lyric-page::before {
+  content:""; position:absolute; z-index:-1; top:0; right:0; width:117px; height:80px;
+  pointer-events:none;
+  background:linear-gradient(226deg,#aa865c85 0%,#b49b723d 42%,transparent 78%);
+  mask:var(--stage-print) top right / 132px auto no-repeat;
+}

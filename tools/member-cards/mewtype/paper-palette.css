@@ -1,0 +1,82 @@
+/* Ink and applied materials on MewType's pearl stock. */
+main.foldsheet[data-band-id="3"] {
+  --paper: #faf9f7;
+  --text: #333d55;
+  --display: #333268;
+  --heading: #393b67;
+  --value: #3b4763;
+  --secondary: #516378;
+  --accent: #6261a7;
+  --dots: radial-gradient(#817dc863 .75px, transparent .9px) 0 0 / 4px 4px;
+}
+.foldsheet .host-medallion {
+  background: linear-gradient(145deg, #d4e7f3, #eee6fb);
+  border-color: #fbfdff;
+  box-shadow: 0 0 0 1px #929fb8, 1px 2px 1px #53628237;
+}
+.foldsheet .masthead .member-line strong { color: #354060; }
+.foldsheet .member-line::before { background: #e0d6f2; }
+.foldsheet .traits, .foldsheet .jp { color: var(--secondary); }
+.foldsheet .lyric-page header h1 { color: var(--display); }
+.foldsheet .lyric-page header h1 .title-phrase:last-child {
+  background: linear-gradient(178deg, transparent 77%, #89d8d8 78% 92%, transparent 93%);
+}
+.foldsheet .section::after { background: linear-gradient(90deg, #95a8c1, transparent); }
+.foldsheet .skills article { --role-fill: #e2dcf3; }
+.foldsheet .skills article[data-skill-role="演出"] { --role-fill: #cfe8ee; }
+.foldsheet .skills article[data-skill-role="激奏"] { --role-fill: #d9e2f6; }
+.foldsheet .skills .kind { color: #414b6a; }
+.foldsheet .skillhead h3 { color: var(--heading); }
+.foldsheet .skills .condition { color: var(--text); }
+.foldsheet .skills article:not(:last-child)::after {
+  background: linear-gradient(90deg, #8d9eb6ac, #a3b7cc66 55%, transparent);
+}
+.foldsheet .ladder-rows::before, .foldsheet .score-pair tbody::before,
+.foldsheet .member-limit { border-color: #8b79af; }
+.foldsheet .bonus-cap { border-color: #a696ca; }
+.foldsheet .score-pair tr + tr > * { border-color: #bbc9d680; }
+
+/* Separate the loose event slip from the pearl fold beneath it. */
+.foldsheet .relation-page { --feed-ink: #343c59; --feed-line: #9caac6; }
+.foldsheet .events::before {
+  background: linear-gradient(148deg, #fefefd, #fafaf8 73%, #eeedea);
+  box-shadow: 0 1px 1px #63636b52, .5px 2.5px 3px #64626930;
+}
+.foldsheet .relations .events dt { background: #cfeaed; color: #345b6a; }
+.foldsheet .events dt::after { color: #476c79; border-color: #80a2ad; }
+.foldsheet .relations .clipping { background: #fafcff; box-shadow: .5px 1.4px 1.7px #52617c62; }
+.foldsheet .clipping::after { background: repeating-linear-gradient(75deg,#ffffff40 0 1px,transparent 1px 4px),#adbad8c9; }
+.foldsheet .relations .gachas dt { background: #dedcf5; color: #4c4681; }
+.foldsheet .relations .gachas .relation-banner { border-color: #abb7c9; box-shadow: .5px 1px 1px #46546b36; }
+.foldsheet .relations .gachas dd::after { background: #f5fbfb; border-color: #8e8ab1; }
+.foldsheet .relations .relation-id, .foldsheet .relations .target-group span,
+.foldsheet .relations .event-role, .foldsheet .relations .bonus-table thead,
+.foldsheet .relations .bonus-table .included { color: var(--secondary); }
+.foldsheet .relations .bonus-table, .foldsheet .relations .bonus-table caption { color: var(--text); }
+.foldsheet .relations .bonus-table thead, .foldsheet .relations .event-targets { border-color: #b7c8d5; }
+.foldsheet .relations .bonus-table tbody tr:first-child { background: #dfe8f3; }
+.foldsheet .relations .bonus-table tbody td:last-child { color: var(--heading); }
+.foldsheet .host-corner::before {
+  background: radial-gradient(#8a9eba9c .7px,transparent .95px) 0 0/4px 4px,
+    linear-gradient(115deg,#a9dcd8,#bfcaee 70%,#acbdd7);
+}
+
+/* A separate silvery instrument on the pearl leaf. Gold indicates cultivation. */
+main.foldsheet.study-compact .console-unit {
+  background: linear-gradient(128deg, #e4eaf3, #f1f5fa 52%, #dae5ef);
+  border-color: #9aaac2;
+  box-shadow: inset 0 1px #fbfdff, inset 0 -1.3px #c7d4e2, .3px 1.6px 0 #96a5b7, .8px 2.5px 2px #465d7b33;
+}
+.console-unit::before, .console-unit::after { background: linear-gradient(#e4eef7, #bccadd 60%, #a8bace); }
+.console-bridge .fastener { background: linear-gradient(135deg,white,#b6c3d3 55%,#92a1b1); }
+.console-bridge .fastener::before { background: #75879b; }
+.console-bridge .grille { background: repeating-linear-gradient(105deg,#879bb2 0 1.2px,#eef4fa 1.5px 2px,transparent 2.3px 3.7px); }
+.console-bridge .level-key { color: #516278; }
+.console-bank .readout-stem { stroke: #8fa2b6; }
+.console-bank .readout .rl { fill: #526279; }
+.console-bank .readout .rv, .console-bank .read-mid-low .rv, .console-bank .read-mid-high .rv { fill: #526178; }
+.console-bank .read-current .rv { fill: #34405c; }
+.console-bank .read-current .rl { fill: #4d6077; }
+.console-bank .read-full .rv { fill: #352e61; }
+.console-bank .read-full .rl { fill: #795826; }
+.console-bank .read-full .readout-stem { stroke: #ac803e; }

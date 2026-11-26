@@ -1,0 +1,124 @@
+{
+  "id": 7,
+  "title": "常伴左右",
+  "jpTitle": "いつも一緒",
+  "character": "Mortis / 若叶睦",
+  "band": "Ave Mujica",
+  "bandId": 2,
+  "bandColor": "#881144",
+  "category": "常驻",
+  "maxLevel": 70,
+  "stats": [
+    {
+      "label": "表演",
+      "initial": 3422,
+      "max": 8375,
+      "color": "#FF8899"
+    },
+    {
+      "label": "技巧",
+      "initial": 3327,
+      "max": 8144,
+      "color": "#77BBDD"
+    },
+    {
+      "label": "形象",
+      "initial": 3374,
+      "max": 8258,
+      "color": "#FFDD88"
+    }
+  ],
+  "skills": [
+    {
+      "role": "队长",
+      "name": "Ave Mujica全部能力值UP",
+      "icon": "icon_skill_parameter_mujica_1.png",
+      "kind": "leader",
+      "skillId": 5,
+      "sourceTexts": [
+        "Ave Mujica成员的\n全部能力值提升4.0%",
+        "Ave Mujica成员的\n全部能力值提升7.0%",
+        "Ave Mujica成员的\n全部能力值提升10.0%",
+        "Ave Mujica成员的\n全部能力值提升14.0%",
+        "Ave Mujica成员的\n全部能力值提升24.0%"
+      ]
+    },
+    {
+      "role": "演出",
+      "name": "得分UP",
+      "icon": "icon_skill_scoreup.png",
+      "kind": "live",
+      "skillId": 1,
+      "sourceTexts": [
+        "【简单】5.0秒内得分提升10.0%",
+        "【简单】5.0秒内得分提升20.0%",
+        "【简单】5.0秒内得分提升30.0%",
+        "【简单】5.0秒内得分提升40.0%",
+        "【简单】5.0秒内得分提升70.0%"
+      ]
+    },
+    {
+      "role": "激奏",
+      "name": "JUST获得量UP",
+      "icon": "icon_skill_just_count.png",
+      "kind": "gekisou",
+      "skillId": 1,
+      "sourceTexts": [
+        "JUST激奏开始后2秒内\nJUST获得量提升1",
+        "JUST激奏开始后3秒内\nJUST获得量提升1",
+        "JUST激奏开始后4秒内\nJUST获得量提升1",
+        "JUST激奏开始后5秒内\nJUST获得量提升1",
+        "JUST激奏期间\nJUST获得量提升1"
+      ]
+    }
+  ],
+  "release": "r-446fa5ab7a4d6ee030a2",
+  "portrait": "portrait-7.png",
+  "frame": "frame-R.png",
+  "rarityIcon": "RarityIconCenter_R.png",
+  "attributeIcon": "attr-Green.png",
+  "attributeName": "翡翠",
+  "rarityLabel": "R",
+  "relations": {
+    "gachas": [],
+    "events": []
+  },
+  "characterId": 7,
+  "cultivation": {
+    "trainingStage": 5,
+    "trainingBonus": 2476,
+    "awakeningStage": 5,
+    "awakeningBonus": 2476,
+    "total": 29729,
+    "maxLevel": 70,
+    "stats": [
+      {
+        "key": "performance",
+        "initial": 3422,
+        "base": 8375,
+        "trainingBonus": 837,
+        "awakeningBonus": 837,
+        "full": 10049
+      },
+      {
+        "key": "technique",
+        "initial": 3327,
+        "base": 8144,
+        "trainingBonus": 814,
+        "awakeningBonus": 814,
+        "full": 9772
+      },
+      {
+        "key": "visual",
+        "initial": 3374,
+        "base": 8258,
+        "trainingBonus": 825,
+        "awakeningBonus": 825,
+        "full": 9908
+      }
+    ]
+  },
+  "jpDebutDate": "2026-09-24",
+  "logo": "wordmark-2.png",
+  "emblem": "band-2-emblem.png"
+}

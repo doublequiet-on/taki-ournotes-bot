@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 206">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2=".91" y2=".55" gradientUnits="objectBoundingBox">
+      <stop stop-color="#1c5e94"/><stop offset=".36" stop-color="#5a99b6"/><stop offset=".78" stop-color="#b4d2d9"/><stop offset="1" stop-color="#d6e6e7"/>
+    </linearGradient>
+    <filter id="edge" x="-16%" y="-16%" width="132%" height="132%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency=".055 .097" numOctaves="3" seed="26" result="warp"/>
+      <feDisplacementMap in="SourceGraphic" in2="warp" scale="9" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="bloom" x="-15%" y="-20%" width="140%" height="145%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency=".045 .08" numOctaves="4" seed="8" result="warp"/>
+      <feDisplacementMap in="SourceGraphic" in2="warp" scale="15" xChannelSelector="R" yChannelSelector="G"/>
+      <feGaussianBlur stdDeviation="1.45"/>
+    </filter>
+    <filter id="fibre" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency=".47 .71" numOctaves="3" seed="13"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .95 .47"/>
+    </filter>
+    <mask id="stock"><rect width="300" height="206" fill="white" filter="url(#fibre)"/></mask>
+  </defs>
+  <g mask="url(#stock)">
+    <g filter="url(#edge)">
+      <path d="M-15 -12H282C267 -3 259 0 252 4C230 5 223 12 201 12C173 13 165 23 139 23C103 26 103 39 82 48C63 54 58 76 47 88C39 103 25 116 25 135C21 156 8 163 6 184L-9 204Z" fill="#a8c9d2" opacity=".7"/>
+      <path d="M-12 -13H246C224 2 195 8 174 10C136 14 124 18 105 28C76 40 61 59 52 74C40 91 32 91 27 112C22 136 9 141 5 162L-13 175Z" fill="url(#sky)" opacity=".85"/>
+      <path d="M-11 -15H207C177 1 153 2 126 10C83 21 63 28 44 49C32 67 16 68 9 98L-10 122Z" fill="#487ea5" opacity=".53"/>
+      <path d="M-7 14C21 4 30 2 51 1C79 2 99 -4 115 -9L-5 -9ZM-9 63C1 43 16 41 27 31C17 32 6 37 -9 42Z" fill="#376b98" opacity=".4"/>
+    </g>
+    <g filter="url(#bloom)">
+      <path d="M-13 20C0 4 29 1 45 4C29 6 17 9 3 21S-2 31 -13 38Z" fill="#bdd9dd" opacity=".68"/>
+      <path d="M12 76C15 54 33 48 45 52C33 53 18 70 12 76ZM90 20C113 7 143 8 153 9C117 12 108 17 90 20Z" fill="#c4dcdf" opacity=".65"/>
+    </g>
+  </g>
+</svg>
