@@ -119,6 +119,13 @@ RESEARCH_SEMANTICS = '''
 '''
 
 
+WEB_EVIDENCE_REPLY = (
+    '先说查到的结论，具体缺哪项就说哪项，省去自我解释。公告没给某角色的复刻日期，就说这份公告没给日期。'
+    '资料明确支持「公告没提到这个角色」时才这样说。只查到部分公告时，把结论限定在查到的范围。'
+    '回答现在回坑先做什么时，开头给最早到期的事项和已核实的截止时间，再说解锁条件。长期内容放后面。'
+)
+
+
 def quote_followup(question):
     # Only a whole, objectless follow-up can be answered locally when the
     # quoted material is missing. A second question must reach the agent.
@@ -2028,6 +2035,7 @@ class ChatAgent:
                     items=tuple(fresh)
                 messages.append({'role':'assistant','content':None,'response_items':items,'reasoning_content':result.reasoning_content,
                     'tool_calls':[{'id':call.id,'type':'function','function':{'name':call.name,'arguments':call.arguments}} for call in calls]})
+                had_web_citations=bool(web_citations)
                 for call in calls:
                     tool_started=time.monotonic()
                     runtime.check(work,deadline,leases)
@@ -2165,6 +2173,11 @@ class ChatAgent:
                         runtime.check(work,deadline,leases)
                         return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success',
                                              evidence=leases,evidence_deadline=work.content_deadline)
+                if task_enabled and web_citations and not had_web_citations:
+                    guidance={'role':'system','content':WEB_EVIDENCE_REPLY}
+                    next_tools=[] if force_final else [tool.wire() for tool in registry.values()]
+                    if runtime.input_bound(work,[*messages,guidance],next_tools)<=work.model_snapshot.profile.max_input_tokens-2048:
+                        messages.append(guidance)
             raise ModelError('model_attempt_limit')
         except ModelError as exc:
             if proactive_evidence and force_final and str(exc) in ('quota_exceeded','primary_budget_exceeded'):
