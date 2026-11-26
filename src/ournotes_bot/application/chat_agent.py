@@ -115,6 +115,7 @@ SOURCE_SEMANTICS = '''
 RESEARCH_SEMANTICS = '''
 比较、多项查询和连续修改用 research_task 记录目标、对象顺序和字段。current_entities 或上轮任务已确认身份时直接 read_entity_fields，否则先站内查证。research_task 与 read_entity_fields 可同轮调用，一次读两个对象。“第二张”“换一张”按 targets 顺序和当前消息更新。谱面难度存 requirements.difficulty，只换对象时继承难度。歌曲等级和Note用 level/notes；song_metrics 用于全曲筛选排序。闲聊不建任务。
 可能属于ON的规则先按对象查 knowledge_search。现实活动看主办方通知；来源不明就问活动名或原文。只有问题或上下文指向本群旧发言、经历或约定才查群记忆，外部资料缺失不算线索。
+点名或续聊问近期复刻、当期活动或回坑优先事项，且结果取决于当前公开资料时，用本轮可用的 web_search 核对对应区服的官方公告。未查到官宣就回答可核对的线索或日期缺口。
 多项规则在 research_task 按条件分项；阅读后用 set 提交全部要求，evidence 只绑定支持该项的已读 chunk_id，缺项留空。知识项 knowledge=true，沿用已确认实体；无实体时 entity_refs=[]、绑定的 entity_ref 为空串。无字段填 fields=[]，无难度填空串。按 coverage 补查或说明缺项；单项可直接答。用户取消用 research_task cancel，换题以当前对象为准。
 '''
 
