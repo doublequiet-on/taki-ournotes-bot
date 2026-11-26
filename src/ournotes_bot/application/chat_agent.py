@@ -115,9 +115,15 @@ SOURCE_SEMANTICS = '''
 RESEARCH_SEMANTICS = '''
 比较、多项查询和连续修改用 research_task 记录目标、对象顺序和字段。current_entities 或上轮任务已确认身份时直接 read_entity_fields，否则先站内查证。research_task 与 read_entity_fields 可同轮调用，一次读两个对象。“第二张”“换一张”按 targets 顺序和当前消息更新。谱面难度存 requirements.difficulty，只换对象时继承难度。歌曲等级和Note用 level/notes；song_metrics 用于全曲筛选排序。闲聊不建任务。
 可能属于ON的规则先按对象查 knowledge_search。现实活动看主办方通知；来源不明就问活动名或原文。只有问题或上下文指向本群旧发言、经历或约定才查群记忆，外部资料缺失不算线索。
-点名或续聊问近期复刻、当期活动或回坑优先事项，且结果取决于当前公开资料时，用本轮可用的 web_search 核对对应区服的官方公告。未查到官宣就回答可核对的线索或日期缺口。
 多项规则在 research_task 按条件分项；阅读后用 set 提交全部要求，evidence 只绑定支持该项的已读 chunk_id，缺项留空。知识项 knowledge=true，沿用已确认实体；无实体时 entity_refs=[]、绑定的 entity_ref 为空串。无字段填 fields=[]，无难度填空串。按 coverage 补查或说明缺项；单项可直接答。用户取消用 research_task cancel，换题以当前对象为准。
 '''
+
+
+WEB_EVIDENCE_REPLY = (
+    '先说查到的结论，具体缺哪项就说哪项，省去自我解释。公告没给某角色的复刻日期，就说这份公告没给日期。'
+    '资料明确支持「公告没提到这个角色」时才这样说。只查到部分公告时，把结论限定在查到的范围。'
+    '回答现在回坑先做什么时，开头给最早到期的事项和已核实的截止时间，再说解锁条件。长期内容放后面。'
+)
 
 
 def quote_followup(question):
@@ -2029,6 +2035,7 @@ class ChatAgent:
                     items=tuple(fresh)
                 messages.append({'role':'assistant','content':None,'response_items':items,'reasoning_content':result.reasoning_content,
                     'tool_calls':[{'id':call.id,'type':'function','function':{'name':call.name,'arguments':call.arguments}} for call in calls]})
+                had_web_citations=bool(web_citations)
                 for call in calls:
                     tool_started=time.monotonic()
                     runtime.check(work,deadline,leases)
@@ -2166,6 +2173,11 @@ class ChatAgent:
                         runtime.check(work,deadline,leases)
                         return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success',
                                              evidence=leases,evidence_deadline=work.content_deadline)
+                if task_enabled and web_citations and not had_web_citations:
+                    guidance={'role':'system','content':WEB_EVIDENCE_REPLY}
+                    next_tools=[] if force_final else [tool.wire() for tool in registry.values()]
+                    if runtime.input_bound(work,[*messages,guidance],next_tools)<=work.model_snapshot.profile.max_input_tokens-2048:
+                        messages.append(guidance)
             raise ModelError('model_attempt_limit')
         except ModelError as exc:
             if proactive_evidence and force_final and str(exc) in ('quota_exceeded','primary_budget_exceeded'):
