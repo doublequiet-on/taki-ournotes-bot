@@ -157,25 +157,32 @@ _STORY_ASSUME_VERIFY = re.compile(r'原作|正片|动画|動畫|剧情|劇情|�
 _ACTIVITY_REGION = r'日服|国际服|國際服|台服|臺服|港服|韩服|韓服|英服|美服|欧服|歐服|(?<![a-z0-9])(?:jp|intl|tw|hk|kr|en)(?![a-z0-9])'
 _ACTIVITY_REGIONS = re.compile(_ACTIVITY_REGION, re.I)
 _ACTIVITY_CLAUSE = re.compile(
-    rf'{_EVIDENCE_CLAUSE.pattern}|(?<=[始束间間期])[啊呀呢吗嗎嘛吧\s]*、\s*(?=(?:{_ACTIVITY_REGION}))', re.I)
+    rf'{_EVIDENCE_CLAUSE.pattern}|(?<=[始束止开開點点号號天日时時间間期])[啊呀呢吗嗎嘛吧\s]*、\s*(?=(?:{_ACTIVITY_REGION}))', re.I)
+_ACTIVITY_WHEN = r'(?:什[么麼][时時](?:候|[间間])|啥时候|哪天|哪日|[何几幾][时時]|[几幾][号號]|[几幾][点點](?:[钟鐘])?)'
+_ACTIVITY_START = r'[开開](?:始|[启啟]|打|放)?'
+_ACTIVITY_END = r'(?:[结結]束|截止)'
+_ACTIVITY_TODAY = r'今天|今日'
 _LIVE_ACTIVITY_TIME = re.compile(
-    r'(?P<today_before>今天)?\s*'
+    rf'(?P<today_before>{_ACTIVITY_TODAY})?\s*'
     rf'(?P<current>下(?:一)?[期次]|这期|這期|本期|当前|當前|现在|現在|最近)?(?:的)?\s*'
     rf'(?:(?:{_ACTIVITY_REGION})(?:\s*(?:和|与|跟|以及|及|、)\s*(?:{_ACTIVITY_REGION}))*(?:的)?)?\s*'
-    r'活[动動](?:的)?\s*(?P<today_after>今天)?\s*'
-    r'(?:(?:什么时候|啥时候|哪天|哪日|何时|几号|幾號|几点|幾點)(?P<verb>开始|開始|结束|結束)|'
-    r'(?P<field>开始|開始|结束|結束)(?:时间|時間|日期)(?:是什么|是啥|是哪天|是几号)?)'
-    r'[啊呀呢吗嗎嘛吧?\s]*$', re.I)
-_ACTIVITY_DAY = r'今天|明天|后天|後天'
+    rf'活[动動](?:的)?\s*(?P<today_after>{_ACTIVITY_TODAY})?\s*(?:是)?'
+    rf'(?:{_ACTIVITY_WHEN}\s*(?:才|就|[会會])?\s*(?P<verb>{_ACTIVITY_START}|{_ACTIVITY_END})|'
+    rf'(?P<field>{_ACTIVITY_START}|{_ACTIVITY_END})'
+    rf'(?:(?:[时時][间間]|日期)(?:是(?:什[么麼]|啥|{_ACTIVITY_WHEN}))?|(?:是在?|在|到)?\s*{_ACTIVITY_WHEN})|'
+    rf'(?:打|[开開]|持[续續]|[还還]能打)?到\s*{_ACTIVITY_WHEN}(?:{_ACTIVITY_END})?)'
+    r'(?:的)?[啊呀呢吗嗎嘛吧?\s]*$', re.I)
+_ACTIVITY_DAY = rf'{_ACTIVITY_TODAY}|明天|后天|後天'
 _ACTIVITY_RELATIVE_END = re.compile(
     rf'(?:(?P<before>{_ACTIVITY_DAY})\s*)?(?:(?:{_ACTIVITY_REGION})\s*)?'
     r'(?:(?:这期|這期|本期|当前|當前)(?:的)?\s*)?活[动動]\s*'
     r'(?P<ask_before>是不是|是否)?\s*'
     rf'(?(before)|(?P<after>{_ACTIVITY_DAY})\s*)'
-    r'(?:就)?(?:(?P<ask_after>是不是|是否)(?:就)?)?(?:要|会|會)?(?:结束|結束)了?'
+    rf'(?:就)?(?:(?P<ask_after>是不是|是否)(?:就)?)?(?:要|会|會)?{_ACTIVITY_END}了?'
     r'(?P<ask_end>吗|嗎|\?)?[啊呀呢?\s]*$', re.I)
 _ACTIVITY_PREFIX = re.compile(
-    r'(?:\s|our\s*notes|\bon\b|那|所以|实际|到底|请问|想问|我想问|有人知道|和|与|跟|及|、|以及|分别|的)*', re.I)
+    r'(?:\s|our\s*notes|\bon\b|那|所以|实际|到底|[请請][问問](?:一?下)?|[问問](?:一)?下|(?:我)?想[问問]|'
+    r'(?:[帮幫]我|麻[烦煩])(?:查|看看?)(?:一?下)?|有人知道|和|与|跟|及|、|以及|分别|的)*', re.I)
 _ACTIVITY_ADDRESS = re.compile(r'^(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*', re.I)
 _UNSCOPED_PITY = re.compile(
     r'(?:请问|谁知道|有人知道)?\s*(?:抽卡)?保底(?:到底|是|要|需要)?\s*(?:多少|几)抽(?:啊|呀|呢|吗)?[?。]*')
@@ -225,11 +232,14 @@ def activity_time_intent(question):
             continue
         match = _activity_time_match(clause)
         if not match:
+            if _ACTIVITY_PREFIX.fullmatch(clause):
+                continue
             standalone = False
             regions = []
             continue
         fields = match.groupdict()
-        verb = '开始' if (fields.get('verb') or fields.get('field')) in ('开始', '開始') else '结束'
+        action = fields.get('verb') or fields.get('field') or ''
+        verb = '开始' if re.fullmatch(_ACTIVITY_START, action) else '结束'
         if fields.get('current') in ('下期', '下一期', '下次', '下一次'):
             if verb != '开始':
                 standalone = False
@@ -240,12 +250,13 @@ def activity_time_intent(question):
         regions = _ACTIVITY_REGIONS.findall(clause) or regions
         labels = [
             {'jp': '日服', 'intl': '国际服'}.get(
-                CALENDAR_SERVERS.get(name.casefold().replace('國', '国').replace('臺', '台')), name)
+                CALENDAR_SERVERS.get(name.casefold()), name)
             for name in regions] or ['']
         questions.extend((label, verb) for label in labels)
         confirmation_day = fields.get('before') or fields.get('after')
         today = fields.get('today_before') or fields.get('today_after')
-        days.add(confirmation_day or (today if verb == '结束' else '') or '')
+        day = confirmation_day or (today if verb == '结束' else '') or ''
+        days.add('今天' if day == '今日' else day)
         asks_end_day &= bool(confirmation_day)
     pairs = tuple(dict.fromkeys(questions))
     return ActivityTimeIntent(pairs, next(iter(days)) if len(days) == 1 else '',

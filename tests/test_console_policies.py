@@ -3009,6 +3009,36 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(activity_time_intent('学校活动今天几点结束').standalone)
         self.assertEqual(activity_time_intent('日服下期活动什么时候结束').questions, ())
 
+    def test_colloquial_activity_times_keep_the_requested_field_and_scope(self):
+        from ournotes_bot.application.persona import activity_time_intent, explicit_evidence_route
+
+        cases = {
+            'taki活动到几点': ((('', '结束'),), ''),
+            '今天活动还能打到几点啊？': ((('', '结束'),), '今天'),
+            '幫我看看國際服活動今日截止到幾點': ((('国际服', '结束'),), '今天'),
+            'taki帮我看下日服活动结束是几点': ((('日服', '结束'),), ''),
+            '今天活动几点才截止': ((('', '结束'),), '今天'),
+            '问一下，这期活动是几点钟结束的': ((('', '结束'),), ''),
+            '國際服活動幾時結束': ((('国际服', '结束'),), ''),
+            '下期活动几点开': ((('', '下期开始'),), ''),
+            '日服下一期活动哪天会开放？': ((('日服', '下期开始'),), ''),
+            '日服这期活动持续到几号、国际服这期活动开打时间是几点': (
+                (('日服', '结束'), ('国际服', '开始')), ''),
+        }
+        for question, (pairs, day) in cases.items():
+            with self.subTest(question=question):
+                intent = activity_time_intent(question)
+                self.assertEqual(intent.questions, pairs)
+                self.assertEqual(intent.relative_end_day, day)
+                self.assertTrue(intent.standalone)
+                self.assertEqual(explicit_evidence_route(question), 'activity_time')
+        for question in ('学校活动今天到几点', '下期社团活动几点开', '日服卡池几时截止',
+                         '活动结果几点结算', '活动奖励什么时候发', '活动今天就截止了',
+                         '昨天的活动到几点', '下期活动能打到几点', '她什么时候开打？'):
+            with self.subTest(question=question):
+                self.assertEqual(activity_time_intent(question).questions, ())
+                self.assertNotEqual(explicit_evidence_route(question), 'activity_time')
+
 
     def test_story_pronoun_does_not_choose_two_people_from_three(self):
         from ournotes_bot.application.persona import referenced_story_question
@@ -5470,12 +5500,12 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.repo.activity_announcements.next.return_value = (None, '', False)
         scenarios = (
             ('taki今天活动几点结束啊', (jp,), (intl,), f'两服《合成中文名》{ended:%Y-%m-%d %H:%M:%S}（北京时间）已结束'),
-            ('taki今天活动几点结束啊', (replace(jp,end_at=later.timestamp()),), (),
+            ('taki今天活动还能打到几点啊', (replace(jp,end_at=later.timestamp()),), (),
              f'日服《合成日文名》{later:%Y-%m-%d %H:%M:%S}（北京时间）结束'),
             ('taki今天活动几点结束啊', (jp,), (replace(intl,end_at=later.timestamp()),),
              f'日服《合成日文名》{ended:%Y-%m-%d %H:%M:%S}（北京时间）已结束。\n'
              f'国际服《合成中文名》{later:%Y-%m-%d %H:%M:%S}（北京时间）结束'),
-            ('taki下一次活动什么时候开始', (jp,next_jp), (intl,replace(next_jp,title='次期中文名')),
+            ('taki下期活动几点开', (jp,next_jp), (intl,replace(next_jp,title='次期中文名')),
              f'两服《次期中文名》{next_at:%Y-%m-%d %H:%M:%S}（北京时间）开始'),
         )
         calendar_query = activity_query._calendar
