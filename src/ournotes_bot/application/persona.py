@@ -159,9 +159,10 @@ _ACTIVITY_REGIONS = re.compile(_ACTIVITY_REGION, re.I)
 _ACTIVITY_CLAUSE = re.compile(
     rf'{_EVIDENCE_CLAUSE.pattern}|(?<=[始束间間期])[啊呀呢吗嗎嘛吧\s]*、\s*(?=(?:{_ACTIVITY_REGION}))', re.I)
 _LIVE_ACTIVITY_TIME = re.compile(
-    rf'(?P<current>下(?:一)?期|这期|這期|本期|当前|當前|现在|現在|最近)?(?:的)?\s*'
+    r'(?P<today_before>今天)?\s*'
+    rf'(?P<current>下(?:一)?[期次]|这期|這期|本期|当前|當前|现在|現在|最近)?(?:的)?\s*'
     rf'(?:(?:{_ACTIVITY_REGION})(?:\s*(?:和|与|跟|以及|及|、)\s*(?:{_ACTIVITY_REGION}))*(?:的)?)?\s*'
-    r'活[动動](?:的)?\s*'
+    r'活[动動](?:的)?\s*(?P<today_after>今天)?\s*'
     r'(?:(?:什么时候|啥时候|哪天|哪日|何时|几号|幾號|几点|幾點)(?P<verb>开始|開始|结束|結束)|'
     r'(?P<field>开始|開始|结束|結束)(?:时间|時間|日期)(?:是什么|是啥|是哪天|是几号)?)'
     r'[啊呀呢吗嗎嘛吧?\s]*$', re.I)
@@ -199,8 +200,6 @@ def _activity_time_match(clause):
             continue
         if match.re is _ACTIVITY_RELATIVE_END and not (match['ask_before'] or match['ask_after'] or match['ask_end']):
             continue
-        if 'current' in match.re.groupindex and not match['current'] and not _ACTIVITY_REGIONS.search(clause):
-            continue
         return match
 
 
@@ -209,6 +208,7 @@ class ActivityTimeIntent:
     questions: tuple[tuple[str, str], ...]
     relative_end_day: str
     standalone: bool
+    asks_end_day: bool = False
 
 
 def activity_time_intent(question):
@@ -217,6 +217,7 @@ def activity_time_intent(question):
     questions = []
     regions = []
     days = set()
+    asks_end_day = True
     standalone = True
     for clause in _ACTIVITY_CLAUSE.split(text):
         clause = clause.strip()
@@ -229,23 +230,26 @@ def activity_time_intent(question):
             continue
         fields = match.groupdict()
         verb = '开始' if (fields.get('verb') or fields.get('field')) in ('开始', '開始') else '结束'
-        if fields.get('current') in ('下期', '下一期'):
+        if fields.get('current') in ('下期', '下一期', '下次', '下一次'):
             if verb != '开始':
                 standalone = False
                 regions = []
                 continue
             verb = '下期开始'
         # Keep an explicitly named region across consecutive calendar questions.
-        regions = _ACTIVITY_REGIONS.findall(clause) or regions or ['日服']
+        regions = _ACTIVITY_REGIONS.findall(clause) or regions
         labels = [
             {'jp': '日服', 'intl': '国际服'}.get(
                 CALENDAR_SERVERS.get(name.casefold().replace('國', '国').replace('臺', '台')), name)
-            for name in regions]
+            for name in regions] or ['']
         questions.extend((label, verb) for label in labels)
-        days.add(fields.get('before') or fields.get('after') or '')
+        confirmation_day = fields.get('before') or fields.get('after')
+        today = fields.get('today_before') or fields.get('today_after')
+        days.add(confirmation_day or (today if verb == '结束' else '') or '')
+        asks_end_day &= bool(confirmation_day)
     pairs = tuple(dict.fromkeys(questions))
-    return ActivityTimeIntent(pairs, next(iter(days)) if len(pairs) == len(days) == 1 else '',
-                              standalone and bool(pairs))
+    return ActivityTimeIntent(pairs, next(iter(days)) if len(days) == 1 else '',
+                              standalone and bool(pairs), asks_end_day and bool(pairs))
 
 
 def referenced_story_question(question, reference):

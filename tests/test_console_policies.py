@@ -2995,11 +2995,18 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(compound.relative_end_day, '')
         self.assertFalse(compound.standalone)
         self.assertEqual(activity_time_intent('日服活动明天结束吗？日服这期活动后天结束吗？').relative_end_day, '')
-        for question in ('taki下期日服活动什么时候开始', '日服下一期活动开始时间是什么？', '下期活动几点开始？'):
+        for question, region in (('taki下期日服活动什么时候开始', '日服'),
+                                 ('日服下一期活动开始时间是什么？', '日服'),
+                                 ('下期活动几点开始？', ''), ('taki下一次活动什么时候开始', '')):
             with self.subTest(question=question):
                 upcoming = activity_time_intent(question)
-                self.assertEqual(upcoming.questions, (('日服', '下期开始'),))
+                self.assertEqual(upcoming.questions, ((region, '下期开始'),))
                 self.assertTrue(upcoming.standalone)
+        today = activity_time_intent('taki今天活动几点结束啊')
+        self.assertEqual(today.questions, (('', '结束'),))
+        self.assertEqual(today.relative_end_day, '今天')
+        self.assertFalse(today.asks_end_day)
+        self.assertFalse(activity_time_intent('学校活动今天几点结束').standalone)
         self.assertEqual(activity_time_intent('日服下期活动什么时候结束').questions, ())
 
 
@@ -5442,6 +5449,51 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                     expected = 'ok' if end is not None else 'no_results' if record is None else 'partial'
                     self.assertEqual(observed,[{'action':'catalog_info','status':expected}])
                     self.assertEqual(diagnostics.health()['availability'],'available')
+        self.client.request.assert_not_awaited()
+
+    async def test_unscoped_activity_answers_both_calendars_and_todays_ended_event(self):
+        from datetime import datetime, timedelta, timezone
+        from ournotes_bot.domain.info_catalog import ActivityCalendar, ActivityInfo
+        from ournotes_bot.query import activity_query
+
+        zone = timezone(timedelta(hours=8))
+        now = datetime.fromtimestamp(self.now, zone).replace(hour=15,minute=0,second=0,microsecond=0)
+        self.now = now.timestamp()
+        start = (now - timedelta(days=7)).timestamp()
+        ended = now.replace(hour=13, minute=59, second=59)
+        later = now.replace(hour=20, minute=59, second=59)
+        jp = ActivityInfo(6,'合成日文名',{},start_at=start,end_at=ended.timestamp())
+        intl = replace(jp,title='合成中文名')
+        next_at = now + timedelta(days=1)
+        next_jp = ActivityInfo(7,'次期日文名',{},start_at=next_at.timestamp(),end_at=(next_at+timedelta(days=7)).timestamp())
+        self.repo.activity_announcements = Mock()
+        self.repo.activity_announcements.next.return_value = (None, '', False)
+        scenarios = (
+            ('taki今天活动几点结束啊', (jp,), (intl,), f'两服《合成中文名》{ended:%Y-%m-%d %H:%M:%S}（北京时间）已结束'),
+            ('taki今天活动几点结束啊', (replace(jp,end_at=later.timestamp()),), (),
+             f'日服《合成日文名》{later:%Y-%m-%d %H:%M:%S}（北京时间）结束'),
+            ('taki今天活动几点结束啊', (jp,), (replace(intl,end_at=later.timestamp()),),
+             f'日服《合成日文名》{ended:%Y-%m-%d %H:%M:%S}（北京时间）已结束。\n'
+             f'国际服《合成中文名》{later:%Y-%m-%d %H:%M:%S}（北京时间）结束'),
+            ('taki下一次活动什么时候开始', (jp,next_jp), (intl,replace(next_jp,title='次期中文名')),
+             f'两服《次期中文名》{next_at:%Y-%m-%d %H:%M:%S}（北京时间）开始'),
+        )
+        calendar_query = activity_query._calendar
+        runtime = self.backend.model_runtime
+        with patch.object(runtime.agent.store,'clock',lambda:self.now), \
+                patch.object(activity_query,'_calendar',side_effect=lambda server,mode,repo,_now:
+                          calendar_query(server,mode,repo,self.now)):
+            for seq,(question,jp_rows,intl_rows,expected) in enumerate(scenarios,1):
+                with self.subTest(question=question,seq=seq):
+                    self.repo.activity_calendars = {
+                        'jp': ActivityCalendar(jp_rows,'jp-r1','jp-fixture','observation-jp'),
+                        'intl': ActivityCalendar(intl_rows,'intl-r1','intl-fixture','observation-intl'),
+                    }
+                    plan,attempts = await self.prepare_native(question,seq=seq)
+                    self.assertEqual(attempts,[])
+                    self.assertEqual(plan['parts'][0]['business_status'],'success')
+                    self.assertEqual(plan['parts'][0]['text'],expected)
+                    self.event(plan,'intent');self.event(plan,'ack')
         self.client.request.assert_not_awaited()
 
     async def test_next_activity_chat_follows_notice_detail_and_cites_it(self):

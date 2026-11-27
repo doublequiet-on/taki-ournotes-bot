@@ -1277,6 +1277,7 @@ class ChatAgent:
         activity = local_activity or (activity_time_intent(chat_query_question(user_question)) if route == 'activity_time' else None)
         activity_questions = activity.questions if activity else ()
         relative_end_day = activity.relative_end_day if activity else ''
+        confirm_day = relative_end_day if activity and activity.asks_end_day else ''
         queried_day = None
         if relative_end_day:
             today = datetime.fromtimestamp(request.timestamp_ms/1000, _CALENDAR_ZONE).date()
@@ -1643,11 +1644,13 @@ class ChatAgent:
             activity_fields = '、'.join(label+('下期活动开始时间' if field=='下期开始' else '这期活动'+field+'时间')
                                        for label, field in activity_questions)
             messages[0]['content']+=(f'\n本轮查询{activity_fields}，先用 catalog_info。先答结论，再说查到的时间和时区。'
+                                     '未指定区服时会核对日服和国际服。同一活动的时间相同可合答，只有一服查到时注明该服。'
                                      '旧缓存用「旧缓存显示」标明。只知道最近一期或下期时，按工具区分。缺时间直接说不知道。')
             if queried_day:
                 messages[0]['content']+=(
                     f'用户说的「{relative_end_day}」是北京时间 {queried_day.isoformat()}。'
-                    '把确切结束时间换算为北京时间后比较日期。先回答是不是这一天，再说结束时间和时区。')
+                    + ('把确切结束时间换算为北京时间后比较日期。先回答是不是这一天，再说结束时间和时区。'
+                       if confirm_day else '当天已结束的活动直接说明实际截止时间。'))
         web=None if proactive_evidence or quote_images or story_premise else runtime.capabilities_for(work).web(work.model_snapshot)
         if web is not None:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
@@ -1717,10 +1720,10 @@ class ChatAgent:
             return PreparedReply(text,business_status='success',evidence=leases,
                                  evidence_deadline=work.content_deadline if leases else None)
         if local_activity or (public_plan and activity_questions):
-            activity_evidence = await self.load_activity_evidence(work, activity_questions)
+            activity_evidence = await self.load_activity_evidence(work, activity_questions, queried_day)
             trace_evidence('catalog_info', activity_evidence['status'])
             runtime.check(work, deadline, leases)
-            text, status = self.calendar_reply(activity_evidence, relative_end_day, queried_day)
+            text, status = self.calendar_reply(activity_evidence, confirm_day, queried_day)
             if public_plan:
                 items = activity_evidence.get('data', {}).get('items', ())
                 if status=='source_unavailable' and not any(item.get('time_withheld') for item in items):
@@ -1936,8 +1939,9 @@ class ChatAgent:
                 if not result.tool_calls:
                     require(isinstance(result.text,str) and bool(result.text.strip()),'model_protocol_error')
                     if activity_questions and (activity_result not in ('ok','partial')
-                                               or relative_end_day and activity_result!='ok'):
-                        text=quote_prefix+(f'我不知道{relative_end_day}是不是结束。' if relative_end_day else '我不知道。')
+                                               or confirm_day and activity_result!='ok' and
+                                               all(label for label, _ in activity_questions)):
+                        text=quote_prefix+(f'我不知道{confirm_day}是不是结束。' if confirm_day else '我不知道。')
                         return evidence_reply(text,'source_unavailable') if proactive_evidence else PreparedReply(
                             text,business_status='source_unavailable')
                     if mechanic and not mechanic_passage:
@@ -2057,7 +2061,7 @@ class ChatAgent:
                                                          knowledge_cache=knowledge_cache if explicit_text and work.chat_task.goal and not mechanic else None,
                                                          meta_question=meta_question,evidence_route=route,just_card=just_card,
                                                          mechanic_server=mechanic_server if mechanic else None,
-                                                         activity_questions=activity_questions)
+                                                         activity_questions=activity_questions, activity_day=queried_day)
                     if call.name=='research_task' and output.get('data')=={'task':'cancelled'}:
                         pending_knowledge_chunks.clear()
                     image_input=output.pop('_image_input',None)
@@ -2247,10 +2251,10 @@ class ChatAgent:
             result['context_handles'] = context_handles
         return result
 
-    async def load_activity_evidence(self, work, questions):
+    async def load_activity_evidence(self, work, questions, queried_day=None):
         runtime = self.runtime
         repository = await runtime.current_repository()
-        output = await runtime.backend.gate.run(self.read_activity_evidence, questions, repository)
+        output = await runtime.backend.gate.run(self.read_activity_evidence, questions, repository, queried_day)
         if isinstance(output, PreparedReply):
             return {'status':output.business_status or 'not_available', 'retryable':True}
         expiries = [item['expires_at'] for item in output['data']['items'] if 'expires_at' in item]
@@ -2258,16 +2262,21 @@ class ChatAgent:
             work.content_deadline = min(work.content_deadline, time.monotonic()+min(expiries)-time.time())
         return output
 
-    def read_activity_evidence(self, questions, repository):
+    def read_activity_evidence(self, questions, repository, queried_day=None):
         repository = repository.capture_query_view()
         catalog = repository.capture_catalog()
         items = []
-        for label, field in questions:
+        requested = dict.fromkeys((region, field) for label, field in questions
+                                  for region in ((label,) if label else ('日服', '国际服')))
+        for label, field in requested:
+            defaulted = (label, field) not in questions
             period = '下期' if field == '下期开始' else '这期'
             field = '开始' if period == '下期' else field
             item = dict(region=label, field=field)
             if period == '下期':
                 item['period'] = period
+            if defaulted:
+                item['region_defaulted'] = True
             server = {'日服':'jp', '国际服':'intl'}.get(label)
             if server is None:
                 items.append(dict(item,status='not_available',missing=field+'时间'))
@@ -2277,15 +2286,22 @@ class ChatAgent:
                              label+period+'活动什么时候'+field, repository)
             info = result.results[0].activity
             status = info.status
-            if info.calendar_time_status == 'related':
+            calendar_time = info.calendar_time
+            recent = info.recent_calendar_end
+            if (queried_day and field == '结束' and recent and not info.calendar_time_withheld
+                    and datetime.fromtimestamp(recent.at, _CALENDAR_ZONE).date() == queried_day
+                    and (calendar_time is None or datetime.fromtimestamp(calendar_time.at, _CALENDAR_ZONE).date() != queried_day)):
+                calendar_time = recent
+                item['already_ended'] = True
+            elif info.calendar_time_status == 'related':
                 status = 'partial'
             elif info.calendar_time_status != 'exact' and status == 'success':
                 status = 'not_available'
             item.update(server=server,status=status,text=result.texts[0])
             if info.calendar_time_withheld:
                 item['time_withheld'] = True
-            if status == 'success' and info.calendar_time is not None:
-                item['calendar_time'] = asdict(info.calendar_time)
+            if status == 'success' and calendar_time is not None:
+                item['calendar_time'] = asdict(calendar_time)
                 if info.calendar_source_url:
                     item['calendar_source_url'] = info.calendar_source_url
             if status != 'success':
@@ -2297,7 +2313,7 @@ class ChatAgent:
             elif info.status=='success' and server=='jp':
                 item.update(source='haneoka_jp',release=catalog.metadata.get('data_version'),
                             observed_at=catalog.last_successful_sync_at,cache_state=catalog.cache_state)
-            if info.evidence_expires_at is not None:
+            if info.evidence_expires_at is not None and not item.get('already_ended'):
                 item['expires_at'] = info.evidence_expires_at
             items.append(item)
         status = ('ok' if all(item['status']=='success' for item in items)
@@ -2306,30 +2322,43 @@ class ChatAgent:
         return dict(status=status,data=dict(items=items))
 
     @staticmethod
-    def calendar_reply(evidence, relative_end_day, queried_day):
+    def calendar_reply(evidence, confirm_day, queried_day):
         items = evidence.get('data', {}).get('items', ())
-        if not any('calendar_time' in item for item in items):
+        exact = [item for item in items if 'calendar_time' in item]
+        if not exact:
             if items and all(item.get('period') == '下期' for item in items):
                 return '我还不知道下期活动什么时候开始。', 'source_unavailable'
-            return (f'我不知道{relative_end_day}是不是结束。' if relative_end_day else '我不知道。',
+            return (f'我不知道{confirm_day}是不是结束。' if confirm_day else '我还没查到活动的确切时间。',
                     'source_unavailable')
+        if len(exact) == 2 and {item['server'] for item in exact} == {'jp', 'intl'}:
+            first, second = exact
+            first_time, second_time = first['calendar_time'], second['calendar_time']
+            if (first_time['event_id'] is not None and first_time['event_id'] == second_time['event_id']
+                    and first_time['at'] == second_time['at']
+                    and all(first.get(key) == second.get(key) for key in ('field', 'period', 'already_ended'))):
+                preferred = first if first['server'] == 'intl' else second
+                items = (dict(preferred, region='两服'), *(item for item in items if item not in exact))
+        answered = {(item.get('period'), item['field']) for item in exact}
         lines = []
         for item in items:
             value = item.get('calendar_time')
             if value is None:
+                if item.get('region_defaulted') and (item.get('period'), item['field']) in answered:
+                    continue
                 lines.append(f"{item['region']}{item.get('period', '这期')}活动的{item['field']}时间我不知道。")
                 continue
             local = datetime.fromtimestamp(value['at'], _CALENDAR_ZONE)
             when = local.strftime('%Y-%m-%d %H:%M:%S')
             source_url = item.get('calendar_source_url')
             stale = item.get('cache_state') == 'stale' and not source_url
-            lead = '旧缓存显示，' if stale else '是，' if local.date() == queried_day else ''
-            lines.append(f"{lead}{item['region']}《{value['title']}》{when}（北京时间）{item['field']}。")
+            lead = '旧缓存显示，' if stale else '是，' if confirm_day and local.date() == queried_day else ''
+            state = '已' if item.get('already_ended') else ''
+            lines.append(f"{lead}{item['region']}《{value['title']}》{when}（北京时间）{state}{item['field']}。")
             if source_url:
                 lines.append(f'[活动公告详情]({source_url})')
         return '\n'.join(lines), 'success'
 
-    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card='',mechanic_server=None,activity_questions=(),fact_windows=None,knowledge_cache=None,chapter_lookup=None):
+    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card='',mechanic_server=None,activity_questions=(),activity_day=None,fact_windows=None,knowledge_cache=None,chapter_lookup=None):
         runtime=self.runtime
         try:
             tool,args=validate_call(call,self.tools if registry is None else registry)
@@ -2561,7 +2590,7 @@ class ChatAgent:
                     cache[key]=lease
                 output={'status':'ok','data':evidence,'_knowledge_scope':scope,'_knowledge_lease':lease}
             elif activity_questions and call.name=='catalog_info':
-                output=await self.load_activity_evidence(work,activity_questions)
+                output=await self.load_activity_evidence(work,activity_questions,activity_day)
             else:
                 repository=await runtime.current_repository()
                 if work.entity_evidence:

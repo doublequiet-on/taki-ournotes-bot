@@ -674,7 +674,7 @@ def _calendar(server, mode, repository, now):
         elif upcoming and not unknown:
             lines.append(f'下一期《{upcoming.title}》将于 {stamp(upcoming.start_at)} 开始。')
             time_status = 'exact'
-            exact_time = CalendarTime(upcoming.title, upcoming.start_at)
+            exact_time = CalendarTime(upcoming.title, upcoming.start_at, upcoming.id)
         else:
             lines.append('当前已读取的资料还不能确定下一期开启时间。')
     elif active_tie:
@@ -682,7 +682,7 @@ def _calendar(server, mode, repository, now):
     elif active:
         current = active[0]
         time_status = 'exact'
-        exact_time = CalendarTime(current.title, current.start_at if mode == '日程开始' else current.end_at)
+        exact_time = CalendarTime(current.title, current.start_at if mode == '日程开始' else current.end_at, current.id)
         if mode == '日程开始':
             lines.append(f'《{current.title}》已于 {stamp(current.start_at)} 开始，目前进行中。')
         else:
@@ -732,7 +732,9 @@ def _calendar(server, mode, repository, now):
     text = '\n'.join((label + ' · 静态活动日程', *lines))
     return InfoAnswer(text, evidence_expires_at=evidence_expires_at,
                       calendar_time_status=time_status, calendar_time=exact_time, calendar_source_url=calendar_source_url,
-                      calendar_time_withheld=time_withheld)
+                      calendar_time_withheld=time_withheld,
+                      recent_calendar_end=CalendarTime(recent.title, recent.end_at, recent.id)
+                      if mode == '日程' and recent and not recent_tie and not unknown else None)
 
 
 def execute_activity(query, repository, *, now=None):
