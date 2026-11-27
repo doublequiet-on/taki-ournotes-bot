@@ -60,6 +60,7 @@ class InfoView:
 class CalendarTime:
     title: str
     at: float
+    event_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ class InfoAnswer:
     calendar_time: CalendarTime | None = None
     calendar_source_url: str | None = None
     calendar_time_withheld: bool = False
+    recent_calendar_end: CalendarTime | None = None
 
 
 def row_text(row: InfoRow) -> str:
